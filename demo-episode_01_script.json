@@ -1,0 +1,295 @@
+{
+  "episode": 1,
+  "title": "代码里的心跳",
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "location": "office",
+      "time_of_day": "morning",
+      "lighting": "自然光",
+      "mood": "紧张、压抑",
+      "shots": [
+        {
+          "shot_id": "shot_1_1",
+          "shot_type": "close_up",
+          "camera_movement": "static",
+          "duration_seconds": 8,
+          "description": "小明戴着眼镜，眉头紧锁，显示器屏幕的光映在他的脸上。他手指飞快地在键盘上敲击，旁边堆着咖啡杯和技术书籍。",
+          "character": "小明",
+          "action": "专注于编程，表情紧张",
+          "dialogue": "",
+          "narration": "小明：(内心OS) 又是一个通宵的BUG，截止日期就快到了...",
+          "emotion": "焦虑、疲惫",
+          "subtitle": "小明：(内心OS) 又是一个通宵的BUG，截止日期就快到了..."
+        },
+        {
+          "shot_id": "shot_1_2",
+          "shot_type": "medium_shot",
+          "camera_movement": "pan_left",
+          "duration_seconds": 12,
+          "description": "王总严肃地走进办公室，手里拿着文件。镜头从王总转向小明，小明立刻坐直了身体。然后镜头再转向另一侧，新入职的小丽正带着自信的笑容，好奇地打量着四周。",
+          "character": "王总, 小明, 小丽",
+          "action": "王总宣布新项目，小明紧张，小丽好奇",
+          "dialogue": "王总: 大家安静一下！这里有一个紧急项目，客户要求高，时间非常紧迫！",
+          "narration": null,
+          "emotion": "王总：严厉；小明：不安；小丽：期待",
+          "subtitle": "王总: 大家安静一下！这里有一个紧急项目，客户要求高，时间非常紧迫！"
+        },
+        {
+          "shot_id": "shot_1_3",
+          "shot_type": "two_shot",
+          "camera_movement": "static",
+          "duration_seconds": 10,
+          "description": "王总将文件放在小明和小丽面前，手指点着两人。小明推了推眼镜，眼神里有些抗拒，小丽则露出了礼貌的微笑。",
+          "character": "王总, 小明, 小丽",
+          "action": "王总分配任务，小明和小丽反应不同",
+          "dialogue": "王总: 小明，你负责技术实现。小丽，你来主导UI/UX设计。你们俩，立刻开始对接！",
+          "narration": null,
+          "emotion": "王总：果断；小明：不情愿；小丽：自信",
+          "subtitle": "王总: 小明，你负责技术实现。小丽，你来主导UI/UX设计。你们俩，立刻开始对接！"
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_2",
+      "location": "office",
+      "time_of_day": "afternoon",
+      "lighting": "室内照明",
+      "mood": "尴尬、试探",
+      "shots": [
+        {
+          "shot_id": "shot_2_1",
+          "shot_type": "medium_shot",
+          "camera_movement": "tracking_forward",
+          "duration_seconds": 8,
+          "description": "小丽充满活力地走向小明的工位，微笑着。小明听到脚步声，猛地抬头，显得有些手足无措。",
+          "character": "小丽, 小明",
+          "action": "小丽主动接近小明，小明有些紧张",
+          "dialogue": "小丽: 小明你好，我是小丽！王总说我们要一起合作，我看了下项目需求，有一些初步的想法...",
+          "narration": null,
+          "emotion": "小丽：热情；小明：局促",
+          "subtitle": "小丽: 小明你好，我是小丽！王总说我们要一起合作，我看了下项目需求，有一些初步的想法..."
+        },
+        {
+          "shot_id": "shot_2_2",
+          "shot_type": "two_shot",
+          "camera_movement": "static",
+          "duration_seconds": 12,
+          "description": "小丽兴致勃勃地向小明展示她的设计草图，用充满艺术感的语言描述。小明则表情严肃，眼神躲闪，用简短的技术术语回应。",
+          "character": "小明, 小丽",
+          "action": "小丽试图沟通，小明回应冷淡",
+          "dialogue": "小明: (快速) 嗯，可行性评估，模块解耦，前后端分离，这些是基本原则...",
+          "narration": null,
+          "emotion": "小丽：积极；小明：疏离",
+          "subtitle": "小明: (快速) 嗯，可行性评估，模块解耦，前后端分离，这些是基本原则..."
+        },
+        {
+          "shot_id": "shot_2_3",
+          "shot_type": "close_up",
+          "camera_movement": "static",
+          "duration_seconds": 7,
+          "description": "小丽的笑容渐渐收敛，眼神中闪过一丝失望，但很快又被一种不服输的坚定取代。小明则迅速低头，再次埋首于电脑屏幕。",
+          "character": "小丽, 小明",
+          "action": "小丽表情变化，小明回避",
+          "dialogue": "",
+          "narration": "小丽：(内心OS) 这个程序员，真是一堵墙啊...",
+          "emotion": "小丽：失望、决心；小明：逃避",
+          "subtitle": "小丽：(内心OS) 这个程序员，真是一堵墙啊..."
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_3",
+      "location": "cafe",
+      "time_of_day": "lunchtime",
+      "lighting": "自然光，温馨",
+      "mood": "轻松、意外",
+      "shots": [
+        {
+          "shot_id": "shot_3_1",
+          "shot_type": "medium_shot",
+          "camera_movement": "zoom_in",
+          "duration_seconds": 9,
+          "description": "咖啡馆里，小丽坐在窗边，边喝咖啡边在笔记本上涂鸦，她偶尔会看向不远处的小明。小明没有看电脑，而是戴着耳机，沉浸在一本精装的奇幻小说中。",
+          "character": "小丽, 小明",
+          "action": "小丽观察小明，小明阅读",
+          "dialogue": null,
+          "narration": "小丽：(内心OS) 原来他不是只看代码，还会看这种书啊...",
+          "emotion": "小丽：好奇；小明：放松",
+          "subtitle": "小丽：(内心OS) 原来他不是只看代码，还会看这种书啊..."
+        },
+        {
+          "shot_id": "shot_3_2",
+          "shot_type": "over_the_shoulder",
+          "camera_movement": "static",
+          "duration_seconds": 10,
+          "description": "小丽起身准备离开，不小心撞到了刚好也站起来的小明。她的笔记本和笔散落一地，小明的奇幻小说也掉了下来。",
+          "character": "小丽, 小明",
+          "action": "两人意外相撞，物品散落",
+          "dialogue": "小丽: 哎呀！对不起！ 小明: (愣住) 没关系...",
+          "narration": null,
+          "emotion": "小丽：抱歉；小明：惊讶",
+          "subtitle": "小丽: 哎呀！对不起！ 小明: (愣住) 没关系..."
+        },
+        {
+          "shot_id": "shot_3_3",
+          "shot_type": "close_up",
+          "camera_movement": "static",
+          "duration_seconds": 8,
+          "description": "小明迅速蹲下，帮小丽捡起散落的画稿，他的目光不经意间被一幅充满想象力的插画吸引。他递还画稿时，嘴角不自觉地勾起一个微小的弧度。小丽有些惊喜。",
+          "character": "小明, 小丽",
+          "action": "小明帮助小丽捡拾，被画稿吸引",
+          "dialogue": "",
+          "narration": null,
+          "emotion": "小明：欣赏、友好；小丽：意外、好奇",
+          "subtitle": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_4",
+      "location": "office",
+      "time_of_day": "late_afternoon",
+      "lighting": "室内照明",
+      "mood": "专注、合作",
+      "shots": [
+        {
+          "shot_id": "shot_4_1",
+          "shot_type": "over_the_shoulder",
+          "camera_movement": "static",
+          "duration_seconds": 9,
+          "description": "小明和小丽并排坐在电脑前，屏幕上是一个复杂的系统架构图。小丽眉头紧锁，似乎在为如何实现一个复杂的用户交互而苦恼。",
+          "character": "小明, 小丽",
+          "action": "两人专注工作，小丽遇到难题",
+          "dialogue": "小丽: 这里的逻辑太复杂了，感觉怎么设计用户都会迷失...",
+          "narration": null,
+          "emotion": "小丽：困惑；小明：沉思",
+          "subtitle": "小丽: 这里的逻辑太复杂了，感觉怎么设计用户都会迷失..."
+        },
+        {
+          "shot_id": "shot_4_2",
+          "shot_type": "two_shot",
+          "camera_movement": "static",
+          "duration_seconds": 12,
+          "description": "小明忽然拿起笔，在白板上迅速画出一个简洁的流程图，用清晰的语言解释着背后的算法逻辑。小丽的眼睛随着他的讲解逐渐亮了起来，露出茅塞顿开的表情。",
+          "character": "小明, 小丽",
+          "action": "小明提出解决方案，小丽茅塞顿开",
+          "dialogue": "小明: 如果我们把这个流程拆解成三步，每一步只处理一个核心操作，这样用户就能清晰地理解。技术上也能更高效。",
+          "narration": null,
+          "emotion": "小明：自信、专业；小丽：惊喜、理解",
+          "subtitle": "小明: 如果我们把这个流程拆解成三步，每一步只处理一个核心操作，这样用户就能清晰地理解。技术上也能更高效。"
+        },
+        {
+          "shot_id": "shot_4_3",
+          "shot_type": "close_up",
+          "camera_movement": "static",
+          "duration_seconds": 8,
+          "description": "小丽立刻在草稿纸上勾勒出新的UI界面，将小明的技术思路完美地转化成直观的设计。她抬头看向小明，两人眼神交汇，不约而同地露出了一丝会心的微笑。",
+          "character": "小丽, 小明",
+          "action": "小丽迅速设计，两人相视一笑",
+          "dialogue": "",
+          "narration": null,
+          "emotion": "小丽：激动、满足；小明：认可、欣慰",
+          "subtitle": null
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_5",
+      "location": "park",
+      "time_of_day": "evening",
+      "lighting": "夕阳余晖",
+      "mood": "宁静、融洽",
+      "shots": [
+        {
+          "shot_id": "shot_5_1",
+          "shot_type": "wide_shot",
+          "camera_movement": "dolly_out",
+          "duration_seconds": 10,
+          "description": "夕阳西下，金色的光芒洒在公园里。小明和小丽并肩走在小路上，彼此之间保持着一小段距离，但不再像之前那样疏远。",
+          "character": "小明, 小丽",
+          "action": "两人在公园散步",
+          "dialogue": null,
+          "narration": "旁白: 第一次的合作，似乎比想象中顺利，也比想象中，少了些尴尬。",
+          "emotion": "平和",
+          "subtitle": "旁白: 第一次的合作，似乎比想象中顺利，也比想象中，少了些尴尬。"
+        },
+        {
+          "shot_id": "shot_5_2",
+          "shot_type": "two_shot",
+          "camera_movement": "static",
+          "duration_seconds": 12,
+          "description": "小丽忽然想起咖啡馆看到的一幕，转头好奇地问小明。小明有些不好意思，但眼神中带着一丝光芒。",
+          "character": "小丽, 小明",
+          "action": "小丽询问小明的爱好，小明回应",
+          "dialogue": "小丽: 我看你中午在看一本奇幻小说？你喜欢那种宏大的世界观吗？我还以为程序员都只看技术书呢。",
+          "narration": null,
+          "emotion": "小丽：好奇；小明：腼腆、放松",
+          "subtitle": "小丽: 我看你中午在看一本奇幻小说？你喜欢那种宏大的世界观吗？我还以为程序员都只看技术书呢。"
+        },
+        {
+          "shot_id": "shot_5_3",
+          "shot_type": "close_up",
+          "camera_movement": "static",
+          "duration_seconds": 10,
+          "description": "小明罕见地笑了笑，眼神看向远方。小丽侧耳倾听，脸上露出若有所思的表情。",
+          "character": "小明, 小丽",
+          "action": "小明分享内心世界，小丽倾听",
+          "dialogue": "小明: (轻声) 代码是规则，但世界观是想象力。在那些故事里，我可以创造，可以冒险... 就像设计一样，充满无限可能。",
+          "narration": null,
+          "emotion": "小明：向往、真诚；小丽：理解、欣赏",
+          "subtitle": "小明: (轻声) 代码是规则，但世界观是想象力。在那些故事里，我可以创造，可以冒险... 就像设计一样，充满无限可能。"
+        }
+      ]
+    },
+    {
+      "scene_id": "scene_6",
+      "location": "apartment",
+      "time_of_day": "night",
+      "lighting": "暖色室内照明",
+      "mood": "平静、疑惑",
+      "shots": [
+        {
+          "shot_id": "shot_6_1",
+          "shot_type": "medium_shot",
+          "camera_movement": "static",
+          "duration_seconds": 8,
+          "description": "小明坐在他简洁的公寓里，看着平板电脑上今天刚完成的部分项目设计。他嘴角带着一丝不易察觉的微笑，眼神瞟向书架上那本奇幻小说和旁边一幅自己绘制的奇幻风格素描。",
+          "character": "小明",
+          "action": "小明回顾一天工作，并看向自己的爱好",
+          "dialogue": null,
+          "narration": "小明：(内心OS) 今天，似乎没那么无聊。",
+          "emotion": "满足、平静",
+          "subtitle": "小明：(内心OS) 今天，似乎没那么无聊。"
+        },
+        {
+          "shot_id": "shot_6_2",
+          "shot_type": "close_up",
+          "camera_movement": "static",
+          "duration_seconds": 12,
+          "description": "手机屏幕亮起，小明拿起手机。是一条来自朋友圈的通知。他点开，看到小丽发的一张照片：她和一个穿着时髦的男人亲密地站在一家艺术展前，男人手臂随意地搭在小丽肩上，两人笑容灿烂。配文写着：“感谢@XX，今晚的灵感源泉！”",
+          "character": "小明",
+          "action": "小明收到通知并查看，发现小丽的社交动态",
+          "dialogue": null,
+          "narration": null,
+          "emotion": "惊讶、困惑",
+          "subtitle": "朋友圈：小丽：感谢@XX，今晚的灵感源泉！"
+        },
+        {
+          "shot_id": "shot_6_3",
+          "shot_type": "close_up",
+          "camera_movement": "zoom_in",
+          "duration_seconds": 7,
+          "description": "小明脸上的微笑瞬间凝固，瞳孔微不可见地收缩。他推了推眼镜，眼神中闪过一丝复杂的情绪，像是错愕，又像是某种难以言喻的失落，屏幕的光映在他的眼镜上。",
+          "character": "小明",
+          "action": "小明表情变化，陷入沉思",
+          "dialogue": null,
+          "narration": "旁白: 代码和设计，在这一刻，似乎不再是唯一的难题...",
+          "emotion": "失落、疑惑、若有所思",
+          "subtitle": "旁白: 代码和设计，在这一刻，似乎不再是唯一的难题..."
+        }
+      ]
+    }
+  ],
+  "next_episode_hook": "小丽口中的“灵感源泉”究竟是谁？他和小丽之间又有着怎样的关系？小明刚刚萌芽的好奇心，会被这突如其来的信息打断吗？"
+}

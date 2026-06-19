@@ -1,0 +1,26 @@
+# Models
+models/
+*.safetensors
+*.gguf
+*.bin
+
+# Output
+output/
+ai-series/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets
+.env
+*.secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
