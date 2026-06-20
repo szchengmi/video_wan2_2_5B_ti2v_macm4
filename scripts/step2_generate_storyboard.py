@@ -64,11 +64,15 @@ def generate_storyboard(script_data, style_name=None):
             if char != "none" and char in CHARACTER_PROMPTS:
                 neg += ", " + CHARACTER_PROMPTS[char]["negative_prompt"]
 
+            # 强制约束镜头时长: 最少1秒，最多6秒
+            dur = shot.get("duration_seconds", 3)
+            dur = max(1, min(6, dur))  # clamp to [1, 6]
+
             scene_data["shots"].append({
                 "shot_id": shot["shot_id"],
                 "shot_type": shot_type,
                 "camera_movement": shot.get("camera_movement", "static"),
-                "duration_seconds": shot.get("duration_seconds", 3),
+                "duration_seconds": dur,
                 "width": params["w"],
                 "height": params["h"],
                 "prompt": full_prompt,

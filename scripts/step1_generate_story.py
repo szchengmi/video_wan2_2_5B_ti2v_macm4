@@ -10,6 +10,23 @@ import json
 import re
 
 
+def _calc_scene_limits(duration_sec):
+    """根据时长返回场景数量限制说明（每个场景约3-5秒）"""
+    if duration_sec <= 3:
+        return "1个场景"
+    elif duration_sec <= 6:
+        return "1-2个场景"
+    elif duration_sec <= 8:
+        return "2个场景"  # 8秒最佳：2场景各4秒
+    elif duration_sec <= 10:
+        return "2-3个场景"
+    elif duration_sec <= 15:
+        return "3个场景"
+    else:
+        scenes = duration_sec // 4
+        return f"{max(1, scenes-1)}-{scenes+1}个场景"
+
+
 def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
                     duration_minutes=3, style="二次元"):
     from google import genai
@@ -25,7 +42,21 @@ def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
 角色: 小明(28岁程序员,内向善良,戴眼镜短发) | 小丽(26岁设计师,活泼开朗,长发) | 王总(45岁总监,严厉公正)
 场景: office(现代办公室) cafe(温馨咖啡馆) park(城市公园) apartment(温馨公寓) street(城市街道)
 
-要求: 目标时长{duration_sec}秒, 每个镜头3-6秒, 合理安排场景数和镜头数, 完整故事线+悬念结尾
+要求（必须严格遵守，否则输出无效）:
+- 总时长严格等于{duration_sec}秒，所有镜头 duration_seconds 之和必须正好等于{duration_sec}
+- 每个镜头 duration_seconds 在 2-4 秒之间（最少2秒，最多4秒）
+- 每个场景包含 1-2 个镜头，每个场景总时长约 3-5 秒
+- 场景数量严格限制：{duration_sec}秒 → {_calc_scene_limits(duration_sec)}
+- 场景数 = 镜头数（每个镜头一个场景）
+- 完整故事线+悬念结尾
+- 严禁超过或低于目标时长
+- 示例：8秒 → 2个场景(各1个镜头4秒) 或 1个场景(2个镜头各4秒) 或 2个场景(第1场景2镜头共5秒+第2场景2镜头共3秒)
+- 不允许多余镜头或场景：场景数和镜头数必须正好符合上述规则
+- **文本字数控制**：
+  - 用于生成音频的最终文本字数 = duration_seconds × 4（中文语速约4字/秒）
+  - 优先使用 dialogue（角色对话）；dialogue 为空则用 narration（旁白）
+  - 总字数严格控制在 duration_seconds × 4 以内，保证配音时长与视频时长匹配
+  - dialogue 和 narration 不能同时为空
 
 纯JSON输出:
 {{"episode": {episode_num}, "title": "标题", "style": "{style}", "scenes": [{{"scene_id": "scene_1", "location": "office",
@@ -34,6 +65,7 @@ def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
 "duration_seconds": 3, "description": "画面描述", "character": "xiaoming",
 "action": "动作", "dialogue": "对话", "narration": "旁白",
 "emotion": "情绪", "subtitle": "字幕"}}]}}], "next_episode_hook": "下集预告"}}"""
+
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -48,141 +80,239 @@ def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
 
     try:
-        return json.loads(text)
+        script = json.loads(text)
     except json.JSONDecodeError:
-        # 修复截断JSON：补全未闭合的花括号
-        fixed = text.rstrip().rstrip(',')
-        opens = fixed.count('{')
-        closes = fixed.count('}')
-        if opens > closes:
-            fixed += '}' * (opens - closes)
+        pass
+    else:
+        return _fix_script(script, duration_sec)
+    # 修复截断JSON：补全未闭合的花括号和方括号
+    fixed = text.rstrip().rstrip(',')
+    opens_b = fixed.count('{')
+    closes_b = fixed.count('}')
+    opens_k = fixed.count('[')
+    closes_k = fixed.count(']')
+    if opens_b > closes_b:
+        fixed += '}' * (opens_b - closes_b)
+    if opens_k > closes_k:
+        fixed += ']' * (opens_k - closes_k)
+    try:
+        script = json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    else:
+        return _fix_script(script, duration_sec)
+    # 尝试用正则提取最长的完整JSON对象
+    m = re.search(r'\{[\s\S]*\}', text)
+    if m:
         try:
-            return json.loads(fixed)
+            script = json.loads(m.group())
         except json.JSONDecodeError:
-            m = re.search(r'\{[\s\S]*\}', text)
-            if m:
-                return json.loads(m.group())
-            # 最终降级：返回预置剧本
-            return _get_fallback_script(episode_num, genre)
+            pass
+        else:
+            return _fix_script(script, duration_sec)
+    # 最终降级：返回预置剧本
+    return _get_fallback_script(episode_num, genre, duration_sec, style)
 
 
-def _get_fallback_script(episode_num=1, genre="urban_romance", style="二次元"):
-    """预置兜底剧本（Gemini JSON 解析失败时使用）"""
+def _fix_script(script, target_duration):
+    """修正剧本：确保总时长、场景数、镜头数符合约束"""
+    scenes = script.get("scenes", [])
+    if not scenes:
+        return _get_fallback_script(script.get("episode", 1), "urban_romance", target_duration, script.get("style", "二次元"))
+
+    # 计算每个场景的总时长和实际镜头数
+    scene_durations = []
+    for sc in scenes:
+        shots = sc.get("shots", [])
+        total = sum(s.get("duration_seconds", 3) for s in shots)
+        scene_durations.append({"scene": sc, "shots": shots, "duration": total})
+
+    actual_total = sum(sd["duration"] for sd in scene_durations)
+
+    # 1. 如果总时长不对，按比例缩放每个镜头
+    if actual_total != target_duration and actual_total > 0:
+        ratio = target_duration / actual_total
+        for sd in scene_durations:
+            new_total = 0
+            for i, shot in enumerate(sd["shots"]):
+                if i == len(sd["shots"]) - 1:
+                    # 最后一个镜头吸收误差
+                    sd["shots"][i]["duration_seconds"] = max(2, min(4, target_duration - new_total))
+                    new_total += sd["shots"][i]["duration_seconds"]
+                else:
+                    new_dur = max(2, min(4, round(shot.get("duration_seconds", 3) * ratio)))
+                    sd["shots"][i]["duration_seconds"] = new_dur
+                    new_total += new_dur
+            sd["duration"] = new_total
+
+    # 2. 修正场景数：8秒目标 → 2个场景
+    expected_scenes = _target_scene_count(target_duration)
+    actual_scenes = len(scene_durations)
+
+    if actual_scenes > expected_scenes:
+        # 场景太多：合并相邻场景到目标数量
+        while len(scene_durations) > expected_scenes:
+            # 找到相邻两个最短场景合并
+            min_combined = float("inf")
+            merge_idx = 0
+            for i in range(len(scene_durations) - 1):
+                combined = scene_durations[i]["duration"] + scene_durations[i + 1]["duration"]
+                if combined < min_combined:
+                    min_combined = combined
+                    merge_idx = i
+            # 合并
+            merged_shots = scene_durations[merge_idx]["shots"] + scene_durations[merge_idx + 1]["shots"]
+            merged_scene = scene_durations[merge_idx]["scene"]
+            merged_scene["shots"] = merged_shots
+            merged_scene["scene_id"] = f"scene_{merge_idx + 1}"
+            scene_durations[merge_idx] = {"scene": merged_scene, "shots": merged_shots, "duration": min_combined}
+            del scene_durations[merge_idx + 1]
+
+    elif actual_scenes < expected_scenes and actual_scenes >= 1:
+        # 场景太少：拆分最长场景
+        while len(scene_durations) < expected_scenes:
+            # 找最长场景
+            longest_idx = max(range(len(scene_durations)), key=lambda i: scene_durations[i]["duration"])
+            sd = scene_durations[longest_idx]
+            if len(sd["shots"]) < 2:
+                break  # 只有一个镜头无法拆
+            # 拆分成两组
+            mid = len(sd["shots"]) // 2
+            shots_a = sd["shots"][:mid]
+            shots_b = sd["shots"][mid:]
+            dur_a = sum(s.get("duration_seconds", 3) for s in shots_a)
+            dur_b = sum(s.get("duration_seconds", 3) for s in shots_b)
+            # 创建新场景
+            new_scene = dict(sd["scene"])
+            new_scene["shots"] = shots_b
+            new_scene["scene_id"] = f"scene_{longest_idx + 2}"
+            sd["scene"]["shots"] = shots_a
+            sd["scene"]["scene_id"] = f"scene_{longest_idx + 1}"
+            sd["shots"] = shots_a
+            sd["duration"] = dur_a
+            scene_durations.insert(longest_idx + 1, {"scene": new_scene, "shots": shots_b, "duration": dur_b})
+
+    # 3. 重新编号 scene_id
+    for i, sd in enumerate(scene_durations):
+        sd["scene"]["scene_id"] = f"scene_{i + 1}"
+
+    # 4. 重新计算并修正总时长误差
+    final_total = sum(sd["duration"] for sd in scene_durations)
+    diff = target_duration - final_total
+    if diff != 0:
+        # 把误差分配到最后一个镜头的 duration_seconds
+        last_scene = scene_durations[-1]
+        last_shot = last_scene["shots"][-1]
+        new_dur = last_shot["duration_seconds"] + diff
+        if new_dur < 2:
+            new_dur = 2
+        elif new_dur > 4:
+            new_dur = 4
+        last_shot["duration_seconds"] = new_dur
+        last_scene["duration"] = sum(s.get("duration_seconds", 3) for s in last_scene["shots"])
+
+    script["scenes"] = [sd["scene"] for sd in scene_durations]
+    return script
+
+
+def _target_scene_count(duration_sec):
+    """返回目标场景数（每个场景约3-5秒）"""
+    if duration_sec <= 3:
+        return 1
+    elif duration_sec <= 6:
+        return 2
+    elif duration_sec <= 8:
+        return 2
+    elif duration_sec <= 10:
+        return 3
+    elif duration_sec <= 15:
+        return 3
+    else:
+        return max(2, duration_sec // 4)
+
+
+def _get_fallback_script(episode_num=1, genre="urban_romance", duration_sec=8, style="二次元"):
+    """预置兜底剧本（Gemini JSON 解析失败时使用），动态适配目标时长"""
+    target_scenes = _target_scene_count(duration_sec)
+    # 每个场景平均时长
+    avg_per_scene = duration_sec / target_scenes
+    scenes = []
+    # 预置对话模板（兜底用），按镜头时长×4 控制字数
+    _fallback_dialogues = [
+        "今天天气真好啊", "你怎么来了", "没关系，我来帮你",
+        "等一下，我想说", "我们走吧", "太不可思议了",
+        "你在看什么", "明天见", "我相信你",
+        "这不可能", "谢谢你", "别担心",
+        "快点过来", "今天加班吗", "晚餐吃什么",
+        "看那边", "快躲开", "他在哪",
+        "我找到了", "别放手", "快跑",
+        "终于到了", "别说了", "等等我",
+    ]
+    _diag_idx = 0
+
+    def _get_fallback_dur(duration_sec):
+        """生成兜底对话，字数 = duration_sec × 4"""
+        nonlocal _diag_idx
+        target_len = duration_sec * 4
+        # 拼接短语直到达到目标字数
+        text = ""
+        while len(text) < target_len:
+            text += _fallback_dialogues[_diag_idx % len(_fallback_dialogues)]
+            _diag_idx += 1
+        # 精确截断到目标字数
+        # 在最后一个标点处截断以保持通顺
+        if len(text) > target_len:
+            # 往回找最近的标点
+            cut = target_len
+            for offset in range(min(cut, 10)):
+                if text[cut - offset] in "，。！？；":
+                    cut = cut - offset
+                    break
+            text = text[:cut]
+        return text
+
+    for i in range(target_scenes):
+        if i == target_scenes - 1:
+            # 最后一个场景吸收误差
+            scene_dur = duration_sec - sum(s.get("_dur", 0) for s in scenes)
+        else:
+            scene_dur = round(avg_per_scene)
+        # 每个场景 1-2 个镜头
+        if scene_dur <= 3:
+            shots = [{"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
+                      "duration_seconds": scene_dur, "description": f"场景{i+1}镜头", "character": "xiaoming",
+                      "action": "动作", "dialogue": _get_fallback_dur(scene_dur),
+                      "narration": "", "emotion": "calm", "subtitle": ""}]
+        else:
+            d1 = scene_dur // 2
+            d2 = scene_dur - d1
+            shots = [
+                {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
+                 "duration_seconds": max(2, min(4, d1)), "description": f"场景{i+1}镜头1", "character": "xiaoming",
+                 "action": "动作", "dialogue": _get_fallback_dur(max(2, min(4, d1))),
+                 "narration": "", "emotion": "calm", "subtitle": ""},
+                {"shot_id": "shot_2", "shot_type": "close_up", "camera_movement": "static",
+                 "duration_seconds": max(2, min(4, d2)), "description": f"场景{i+1}镜头2", "character": "xiaoli",
+                 "action": "动作", "dialogue": _get_fallback_dur(max(2, min(4, d2))),
+                 "narration": "", "emotion": "calm", "subtitle": ""}
+            ]
+        scenes.append({
+            "scene_id": f"scene_{i+1}",
+            "location": ["office", "cafe", "park", "apartment", "street"][i % 5],
+            "time_of_day": ["morning", "afternoon", "evening", "night", "morning"][i % 5],
+            "lighting": "自然光", "mood": "平静",
+            "shots": shots,
+            "_dur": sum(s["duration_seconds"] for s in shots)
+        })
+    # 清理内部字段
+    for s in scenes:
+        del s["_dur"]
     return {
         "episode": episode_num,
-        "title": "第一集：初遇",
+        "title": f"第{episode_num}集：短剧",
         "style": style,
-        "scenes": [
-            {
-                "scene_id": "scene_1", "location": "office", "time_of_day": "morning",
-                "lighting": "自然光", "mood": "平静日常",
-                "shots": [
-                    {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "小明在办公室敲代码", "character": "xiaoming",
-                     "action": "专注地敲击键盘", "dialogue": "", "narration": "周一的早晨，办公室里只有键盘的声音。",
-                     "emotion": "calm", "subtitle": "周一的早晨，办公室里只有键盘的声音。"},
-                    {"shot_id": "shot_2", "shot_type": "close_up", "camera_movement": "static",
-                     "duration_seconds": 2, "description": "小明表情特写", "character": "xiaoming",
-                     "action": "微微皱眉", "dialogue": "这个需求又改了...", "narration": "",
-                     "emotion": "thoughtful", "subtitle": "这个需求又改了..."},
-                    {"shot_id": "shot_3", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "小丽走进办公室", "character": "xiaoli",
-                     "action": "推门进来，笑着打招呼", "dialogue": "早啊小明！今天天气真好！", "narration": "",
-                     "emotion": "happy", "subtitle": "早啊小明！今天天气真好！"}
-                ]
-            },
-            {
-                "scene_id": "scene_2", "location": "cafe", "time_of_day": "afternoon",
-                "lighting": "暖黄灯光", "mood": "温馨浪漫",
-                "shots": [
-                    {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "小明和小丽在咖啡馆聊天", "character": "xiaoming",
-                     "action": "端着咖啡杯，认真倾听", "dialogue": "你觉得这个设计方案怎么样？", "narration": "",
-                     "emotion": "calm", "subtitle": "你觉得这个设计方案怎么样？"},
-                    {"shot_id": "shot_2", "shot_type": "close_up", "camera_movement": "static",
-                     "duration_seconds": 2, "description": "小丽眼睛发亮", "character": "xiaoli",
-                     "action": "眼睛发亮，兴奋地比划", "dialogue": "我觉得配色可以再大胆一些！", "narration": "",
-                     "emotion": "happy", "subtitle": "我觉得配色可以再大胆一些！"},
-                    {"shot_id": "shot_3", "shot_type": "medium_shot", "camera_movement": "pan_right",
-                     "duration_seconds": 3, "description": "两人相视而笑", "character": "xiaoming",
-                     "action": "忍不住笑了", "dialogue": "你总是这么有想法。", "narration": "",
-                     "emotion": "embarrassed", "subtitle": "你总是这么有想法。"}
-                ]
-            },
-            {
-                "scene_id": "scene_3", "location": "office", "time_of_day": "evening",
-                "lighting": "夕阳余晖", "mood": "紧张",
-                "shots": [
-                    {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "王总走进办公室", "character": "boss_wang",
-                     "action": "严肃地推门进来", "dialogue": "小明，客户对方案很不满意！", "narration": "",
-                     "emotion": "angry", "subtitle": "小明，客户对方案很不满意！"},
-                    {"shot_id": "shot_2", "shot_type": "close_up", "camera_movement": "static",
-                     "duration_seconds": 2, "description": "小明紧张的表情", "character": "xiaoming",
-                     "action": "紧张地站起来", "dialogue": "什么？我明明按需求做的...", "narration": "",
-                     "emotion": "nervous", "subtitle": "什么？我明明按需求做的..."},
-                    {"shot_id": "shot_3", "shot_type": "wide_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "三人对峙", "character": "boss_wang",
-                     "action": "将文件摔在桌上", "dialogue": "需求已经变了，你不知道吗？明天早上之前改好！", "narration": "",
-                     "emotion": "angry", "subtitle": "需求已经变了，你不知道吗？明天早上之前改好！"}
-                ]
-            },
-            {
-                "scene_id": "scene_4", "location": "apartment", "time_of_day": "night",
-                "lighting": "台灯光", "mood": "温馨感人",
-                "shots": [
-                    {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "小明在公寓加班", "character": "xiaoming",
-                     "action": "疲惫地盯着屏幕", "dialogue": "", "narration": "夜深了，小明还在改方案。",
-                     "emotion": "sad", "subtitle": "夜深了，小明还在改方案。"},
-                    {"shot_id": "shot_2", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "小丽端着夜宵进来", "character": "xiaoli",
-                     "action": "轻轻推门，端着夜宵", "dialogue": "还没休息？我给你带了宵夜。", "narration": "",
-                     "emotion": "calm", "subtitle": "还没休息？我给你带了宵夜。"},
-                    {"shot_id": "shot_3", "shot_type": "close_up", "camera_movement": "static",
-                     "duration_seconds": 2, "description": "小明感动地看着小丽", "character": "xiaoming",
-                     "action": "感动地看着小丽", "dialogue": "谢谢你，小丽。有你在真好。", "narration": "",
-                     "emotion": "happy", "subtitle": "谢谢你，小丽。有你在真好。"}
-                ]
-            },
-            {
-                "scene_id": "scene_5", "location": "park", "time_of_day": "morning",
-                "lighting": "阳光明媚", "mood": "充满希望",
-                "shots": [
-                    {"shot_id": "shot_1", "shot_type": "wide_shot", "camera_movement": "pan_left",
-                     "duration_seconds": 3, "description": "公园里晨跑", "character": "xiaoming",
-                     "action": "在公园晨跑", "dialogue": "", "narration": "改完方案的第二天，小明决定出门透透气。",
-                     "emotion": "calm", "subtitle": "改完方案的第二天，小明决定出门透透气。"},
-                    {"shot_id": "shot_2", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "偶遇小丽", "character": "xiaoli",
-                     "action": "惊喜地挥手", "dialogue": "小明！好巧啊！", "narration": "",
-                     "emotion": "surprised", "subtitle": "小明！好巧啊！"},
-                    {"shot_id": "shot_3", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "两人并肩走在公园", "character": "xiaoming",
-                     "action": "并肩散步，相视而笑", "dialogue": "小丽，昨晚的方案客户通过了！", "narration": "",
-                     "emotion": "happy", "subtitle": "小丽，昨晚的方案客户通过了！"}
-                ]
-            },
-            {
-                "scene_id": "scene_6", "location": "office", "time_of_day": "morning",
-                "lighting": "自然光", "mood": "紧张期待",
-                "shots": [
-                    {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                     "duration_seconds": 3, "description": "王总宣布消息", "character": "boss_wang",
-                     "action": "站在会议室前方", "dialogue": "告诉大家一个好消息——", "narration": "",
-                     "emotion": "calm", "subtitle": "告诉大家一个好消息——"},
-                    {"shot_id": "shot_2", "shot_type": "close_up", "camera_movement": "static",
-                     "duration_seconds": 2, "description": "小明和小丽紧张对视", "character": "xiaoming",
-                     "action": "紧张地握紧拳头", "dialogue": "", "narration": "",
-                     "emotion": "nervous", "subtitle": ""},
-                    {"shot_id": "shot_3", "shot_type": "wide_shot", "camera_movement": "dolly_in",
-                     "duration_seconds": 3, "description": "王总微笑", "character": "boss_wang",
-                     "action": "露出罕见的微笑", "dialogue": "客户非常满意！小明、小丽，你们做到了！", "narration": "",
-                     "emotion": "happy", "subtitle": "客户非常满意！小明、小丽，你们做到了！"}
-                ]
-            }
-        ],
-        "next_episode_hook": "小明和小丽的项目获得了成功，但新的挑战正在等着他们..."
+        "scenes": scenes,
+        "next_episode_hook": "故事继续..."
     }
 
 

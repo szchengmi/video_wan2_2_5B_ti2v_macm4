@@ -116,24 +116,24 @@ def main():
     log("Step 3: 画面生成 → 跳过 (Wan2.2 直接 T2V)")
     log("=" * 50)
 
-    # Step 4: 视频生成 (Wan2.2 TI2V)
+    # Step 4: 视频生成 (Wan2.2 TI2V) — 放在音频之前，让 Step5 知道实际视频时长
     log("\n" + "=" * 50)
     log("Step 4: 视频生成 (Wan2.2 TI2V 5B)")
     log("=" * 50)
     videos_dir = f"{get_dirs(EPISODE_NUM)['videos']}"
     subprocess.run([
-        "python", "step4_generate_videos_wan22.py",
+        sys.executable, "step4_generate_videos_wan22.py",
         "--storyboard", sb_path,
         "--output-dir", videos_dir,
     ], cwd=_SCRIPT_DIR)
 
-    # Step 5: 配音生成
+    # Step 5: 配音生成 (在视频之后，根据实际视频时长调整语速)
     log("\n" + "=" * 50)
     log("Step 5: 配音生成")
     log("=" * 50)
     audio_dir = f"{get_dirs(EPISODE_NUM)['audio']}"
     subprocess.run([
-        "python", "step5_generate_audio.py",
+        sys.executable, "step5_generate_audio.py",
         "--storyboard", sb_path,
         "--output-dir", audio_dir,
     ], cwd=_SCRIPT_DIR)
@@ -144,7 +144,7 @@ def main():
     log("=" * 50)
     final_dir = f"{get_dirs(EPISODE_NUM)['final']}"
     subprocess.run([
-        "python", "step6_compose.py",
+        sys.executable, "step6_compose.py",
         "--storyboard", sb_path,
         "--videos-dir", videos_dir,
         "--audio-dir", audio_dir,

@@ -106,17 +106,18 @@ def _make_srt(sb, path):
 
 
 def _concat(files, out, mtype):
-    lf = out + ".list"
-    with open(lf, "w") as f:
-        for p in files:
-            f.write(f"file '{p}'\n")
+    """用 ffmpeg concat filter 拼接文件（比 concat demuxer 更可靠）"""
+    inputs = " ".join(f'-i "{os.path.abspath(p)}"' for p in files)
+    n = len(files)
     if mtype == "video":
-        cmd = f'ffmpeg -y -f concat -safe 0 -i "{lf}" -c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart "{out}"'
+        # 视频：concat filter → 重新编码
+        filter_str = "".join(f"[{i}:v]" for i in range(n)) + f"concat=n={n}:v=1:a=0[outv]"
+        cmd = f'ffmpeg -y {inputs} -filter_complex "{filter_str}" -map "[outv]" -c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart "{out}"'
     else:
-        cmd = f'ffmpeg -y -f concat -safe 0 -i "{lf}" -acodec pcm_s16le -ar {AUDIO_SAMPLE_RATE} -ac 1 "{out}"'
+        # 音频：concat filter → 重新编码（避免 wav concat demuxer bug）
+        filter_str = "".join(f"[{i}:a]" for i in range(n)) + f"concat=n={n}:v=0:a=1[outa]"
+        cmd = f'ffmpeg -y {inputs} -filter_complex "{filter_str}" -map "[outa]" -ac 1 -ar {AUDIO_SAMPLE_RATE} "{out}"'
     run_cmd(cmd, timeout=300)
-    if os.path.exists(lf):
-        os.remove(lf)
 
 
 if __name__ == "__main__":

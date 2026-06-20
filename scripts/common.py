@@ -46,7 +46,6 @@ def _get_kaggle_secret(key_name):
     # 方式3: 环境变量
     return os.environ.get(key_name, "")
 
-GOOGLE_API_KEY = _get_kaggle_secret("GOOGLE_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # 平台相关默认路径
@@ -54,7 +53,7 @@ if _IS_KAGGLE:
     BASE_DIR = os.environ.get("BASE_DIR", "/kaggle/working/ai-series")
     WAN22_DATASET = os.environ.get("WAN22_DATASET", "/kaggle/input/datasets/saysnkaggle/wan2-2-5b-f16")
 elif _IS_MAC:
-    _MAC_DEFAULT = os.path.expanduser("~/heipiworkspace/mac/projects/video_wan2_2_5B_ti2v_macm4/models")
+    _MAC_DEFAULT = "/Users/heipi/ComfyUI/models"
     BASE_DIR = os.environ.get("BASE_DIR", os.path.expanduser("~/heipiworkspace/mac/projects/video_wan2_2_5B_ti2v_macm4/output"))
     WAN22_DATASET = os.environ.get("WAN22_DATASET", _MAC_DEFAULT)
 else:

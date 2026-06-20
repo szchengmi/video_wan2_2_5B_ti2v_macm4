@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import shutil
+import subprocess
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 if HF_TOKEN:

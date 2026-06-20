@@ -11,7 +11,11 @@ Step 4: 视频生成 - Wan2.2 TI2V 5B (fp16 safetensors)
   - wan2.2_vae.safetensors (VAE, ~1.4GB)
 """
 
+# 仅对本地 ComfyUI 绕过代理，Gemini API 等外网继续走代理
 import os
+os.environ["no_proxy"] = "127.0.0.1,localhost"
+os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+
 import sys
 import json
 import time
@@ -19,12 +23,25 @@ import shutil
 import urllib.request
 import urllib.error
 import subprocess
+import gc
+
+# 只对本地 ComfyUI URL 禁用代理，其余地址继续使用系统代理
+class _LocalBypassProxyHandler(urllib.request.ProxyHandler):
+    def proxy_open(self, req, proxy, type):
+        # 本地 ComfyUI 请求不走代理
+        if req.host.startswith("127.0.0.1") or req.host.startswith("localhost"):
+            return None
+        return super().proxy_open(req, proxy, type)
+
+urllib.request.install_opener(
+    urllib.request.build_opener(_LocalBypassProxyHandler())
+)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (
     log, save_json, load_json, run_cmd,
     EPISODE_NUM, get_dirs, WAN22_MODELS_DIR,
-    COMFYUI_GPU_FLAG, _IS_APPLE_SILICON, _IS_MAC,
+    COMFYUI_GPU_FLAG, _IS_APPLE_SILICON, _IS_MAC, _IS_KAGGLE,
 )
 
 # ============================================================
@@ -44,7 +61,8 @@ def _find_comfyui():
             return ("pip", os.path.dirname(spec.origin))
     except:
         pass
-    for candidate in ["/kaggle/working/ComfyUI", "/kaggle/working/ComfyUI-master"]:
+    for candidate in ["/kaggle/working/ComfyUI", "/kaggle/working/ComfyUI-master",
+                      "/Users/heipi/ComfyUI"]:
         if os.path.isdir(candidate) and os.path.isfile(f"{candidate}/main.py"):
             return ("dir", candidate)
     return None
@@ -70,26 +88,28 @@ def _install_comfyui():
             run_cmd(f"pip install -r {req} 2>&1 | tail -3", timeout=60)
 
 
-def _create_extra_model_paths():
+def _create_extra_model_paths(comfyui_dir=None):
     """创建 extra_model_paths.yaml 注册模型路径"""
+    if comfyui_dir is None:
+        comfyui_dir = COMFYUI_DIR
+    rel_base = "./models" if _IS_MAC else "."
     if _IS_MAC:
-        # Mac 上直接用 models/ 下的子目录
         yaml_content = f"""\
 wan22_ti2v:
   base_path: {WAN22_MODELS_DIR}
   diffusion_models: ./unet
-  text_encoders: ./clip
+  text_encoders: ./text_encoders
   vae: ./vae
 """
     else:
         yaml_content = f"""\
 wan22_ti2v:
   base_path: {WAN22_MODELS_DIR}
-  diffusion_models: .
-  text_encoders: .
-  vae: .
+  diffusion_models: {rel_base}
+  text_encoders: {rel_base}
+  vae: {rel_base}
 """
-    yaml_path = f"{COMFYUI_DIR}/extra_model_paths.yaml"
+    yaml_path = f"{comfyui_dir}/extra_model_paths.yaml"
     with open(yaml_path, "w") as f:
         f.write(yaml_content)
     log(f"  extra_model_paths.yaml: {yaml_path}")
@@ -97,12 +117,43 @@ wan22_ti2v:
 
 def _start_comfyui():
     """启动 ComfyUI 服务器"""
+    # 绕过代理访问本地 ComfyUI（必须尽早设置，urllib 读取环境变量有缓存）
+    os.environ["no_proxy"] = "127.0.0.1,localhost"
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost"
+    # 清除 urllib 的代理缓存，强制重新读取 no_proxy
+    import urllib.request
+    urllib.request.getproxies = lambda: {}
+    # 先检测是否已有实例在运行（多次重试，处理503）
+    for attempt in range(8):
+        try:
+            req = urllib.request.urlopen(f"{COMFYUI_URL}/system_stats", timeout=3)
+            if req.status == 200:
+                log(f"  ✅ ComfyUI 已在运行 ({COMFYUI_URL})")
+                return True
+        except urllib.error.HTTPError as e:
+            if e.code in (503, 502, 409):
+                if attempt == 0:
+                    log(f"  ⏳ ComfyUI 响应 {e.code} (启动中)，继续等待...")
+                time.sleep(3)
+                continue
+            log(f"  ⏳ ComfyUI 响应 {e.code}，继续等待...")
+            time.sleep(3)
+            continue
+        except Exception:
+            break
+    # 额外检测：看端口 8188 是否监听
+    import subprocess
     try:
-        urllib.request.urlopen(f"{COMFYUI_URL}/system_stats", timeout=2)
-        log("ComfyUI 已在运行")
-        return True
-    except:
+        result = subprocess.run(
+            ["lsof", "-iTCP:8188", "-sTCP:LISTEN", "-P", "-n"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            log(f"  ✅ ComfyUI 端口 8188 正在监听，已在运行")
+            return True
+    except Exception:
         pass
+    log(f"  ⚠️ ComfyUI 未运行，尝试启动...")
 
     result = _find_comfyui()
     if result:
@@ -115,10 +166,11 @@ def _start_comfyui():
             log("❌ ComfyUI 安装失败")
             return False
 
-    _create_extra_model_paths()
+    comfyui_dir = result[1] if isinstance(result[1], str) and os.path.isdir(result[1]) else COMFYUI_DIR
+    _create_extra_model_paths(comfyui_dir)
 
-    cwd = result[1] if isinstance(result[1], str) and os.path.isdir(result[1]) else None
-    log_file = "/kaggle/working/ai-series/comfyui.log"
+    cwd = comfyui_dir
+    log_file = os.path.join(comfyui_dir, "comfyui.log")
     log_fh = open(log_file, "w")
 
     has_gpu = False
@@ -175,9 +227,9 @@ def _find_wan22_models():
     """查找 Wan2.2 模型文件，兼容 Mac 本地和 Kaggle 路径"""
     search_paths = [WAN22_MODELS_DIR]
 
-    # Mac 本地: 模型在 models/unet/, models/vae/, models/clip/
+    # Mac 本地: 模型在 models/unet/, models/vae/, models/clip/, models/text_encoders/
     if _IS_MAC:
-        for sub in ["unet", "vae", "clip"]:
+        for sub in ["unet", "vae", "clip", "text_encoders"]:
             p = os.path.join(WAN22_MODELS_DIR, sub)
             if os.path.isdir(p):
                 search_paths.append(p)
@@ -231,14 +283,39 @@ def _queue_prompt(workflow):
         raise
 
 
-def _wait_for_completion(prompt_id, timeout=1800):
-    """等待工作流完成"""
+def _wait_for_completion(prompt_id, timeout=3600):
+    """等待工作流完成（不修改全局代理设置）"""
+    import urllib.request as _urllib_req
+    # 使用本地绕过代理的 opener（不污染全局 getproxies）
+    class _LocalOpener(_urllib_req.OpenerDirector):
+        def open(self, fullurl, data=None, timeout=30):
+            if isinstance(fullurl, str) and ("127.0.0.1" in fullurl or "localhost" in fullurl):
+                # 临时移除代理
+                saved = _urllib_req.getproxies
+                _urllib_req.getproxies = lambda: {}
+                try:
+                    return super().open(fullurl, data, timeout)
+                finally:
+                    _urllib_req.getproxies = saved
+            return super().open(fullurl, data, timeout)
+
+    opener = _LocalOpener()
+    opener.add_handler(_urllib_req.ProxyHandler({}))
+    # 移除默认的 ProxyHandler，只对本地 URL 绕过
+    _urllib_req.install_opener(_urllib_req.build_opener(
+        _LocalBypassProxyHandler(),
+        _urllib_req.HTTPHandler(),
+        _urllib_req.HTTPSHandler(),
+        _urllib_req.HTTPDefaultErrorHandler(),
+        _urllib_req.HTTPRedirectHandler(),
+    ))
+
     start = time.time()
     last_log = 0
     while time.time() - start < timeout:
         try:
-            req = urllib.request.Request(f"{COMFYUI_URL}/history/{prompt_id}")
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            req = _urllib_req.Request(f"{COMFYUI_URL}/history/{prompt_id}")
+            with _urllib_req.urlopen(req, timeout=60) as resp:
                 history = json.loads(resp.read())
             if prompt_id in history:
                 entry = history[prompt_id]
@@ -367,22 +444,17 @@ def _build_wan22_workflow(positive_prompt, negative_prompt,
     }
     return workflow
 
-
 def _save_placeholder_video(shot, output_path, num_frames):
-    """生成占位视频"""
-    from PIL import Image, ImageDraw
-    res = 480
-    img = Image.new("RGB", (res, res), (20, 20, 40))
-    draw = ImageDraw.Draw(img)
-    draw.text((20, 30), "[VIDEO]", fill=(200, 200, 255))
-    draw.text((20, 70), shot.get("shot_id", ""), fill=(200, 255, 200))
+    """生成占位视频（纯 ffmpeg，不依赖 PIL）"""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    tmp = output_path.replace(".mp4", "_tmp.png")
-    img.save(tmp)
     dur = max(num_frames / 8, 1)
-    run_cmd(f'ffmpeg -y -loop 1 -i "{tmp}" -t {dur} -c:v libx264 -pix_fmt yuv420p -movflags +faststart "{output_path}" 2>/dev/null')
-    if os.path.exists(tmp):
-        os.remove(tmp)
+    # 用 lavfi color source 生成纯色占位视频
+    cmd = (
+        f'ffmpeg -y -f lavfi -i "color=c=1a1a2e:s=832x480:d={dur}:r=8" '
+        f'-c:v libx264 -pix_fmt yuv420p -movflags +faststart '
+        f'"{output_path}" 2>/dev/null'
+    )
+    subprocess.run(cmd, shell=True, timeout=30)
 
 
 # ============================================================
@@ -405,14 +477,11 @@ def main(storyboard=None):
             return
         log(f"  ✅ {name}: {os.path.basename(path)} ({os.path.getsize(path)/1e6:.0f}MB)")
 
-    # ComfyUI
-    if not _start_comfyui():
-        log("❌ ComfyUI 启动失败")
-        return
-
     # 参数 (对齐参考工作流的 shift=8, euler/simple)
     w, h = 832, 480
-    num_frames = 49  # ~6s @ 8fps → 13 latent 帧
+    # 根据每个镜头的实际时长计算帧数: num_frames = duration * 8 (8fps)
+    _fps = 8
+    _default_num_frames = 6 * _fps  # 默认6秒 = 48帧
     steps = 20
     cfg = 5.0
     sampler = "euler"
@@ -420,7 +489,7 @@ def main(storyboard=None):
     shift = 8.0
 
     style_name = storyboard.get("style", "未指定")
-    log(f"参数: {w}x{h} | {num_frames}f | {steps}步 | CFG={cfg} | shift={shift} | {sampler}/{scheduler} | 风格: {style_name}")
+    log(f"参数: {w}x{h} | {_default_num_frames}f (默认) | {steps}步 | CFG={cfg} | shift={shift} | {sampler}/{scheduler} | 风格: {style_name}")
 
     count = 0
     for scene in storyboard.get("scenes", []):
@@ -430,9 +499,23 @@ def main(storyboard=None):
             ep = storyboard.get("episode", 1)
             out = f"{dirs['videos']}/ep{ep:02d}_{scene['scene_id']}_{sid}.mp4"
 
-            if os.path.exists(out) and os.path.getsize(out) > 100000:
-                log(f"  [{count}/{total}] {sid} 跳过")
+            # --force 模式下不跳过（主流程已清理了 episode 目录）
+            # 检查是否为有效视频（>500KB 视为正常生成，<100KB 视为占位/损坏）
+            if os.path.exists(out) and 100000 < os.path.getsize(out) < 5000000:
+                log(f"  [{count}/{total}] {sid} 跳过 ({os.path.getsize(out)//1024}KB)")
                 continue
+            elif os.path.exists(out) and os.path.getsize(out) <= 100000:
+                log(f"  [{count}/{total}] {sid} 覆盖占位视频 ({os.path.getsize(out)//1024}KB)")
+                os.remove(out)
+
+            # 每个镜头前启动 ComfyUI（kill 旧进程 + 释放内存/SWAP）
+            _restart_comfyui()
+            if not _wait_for_comfyui(timeout=300):
+                log(f"  [{count}/{total}] {sid} ❌ ComfyUI 启动超时")
+                _save_placeholder_video(shot, out, shot.get("duration_seconds", 6) * _fps)
+                continue
+            # 等待 SWAP 释放到安全水位（<3GB），避免推理时 thrashing
+            _wait_for_swap_release(limit_gb=3, timeout=300)
 
             prompt_base = shot.get('prompt', '')
             if 'anime style' not in prompt_base and 'style' not in storyboard:
@@ -451,7 +534,7 @@ def main(storyboard=None):
                 unet_path=models["unet"],
                 clip_path=models["clip"],
                 vae_path=models["vae"],
-                width=w, height=h, frames=num_frames,
+                width=w, height=h, frames=shot.get("duration_seconds", 6) * _fps,
                 steps=steps, cfg=cfg,
                 sampler=sampler, scheduler=scheduler,
                 shift=shift, seed=seed,
@@ -483,15 +566,221 @@ def main(storyboard=None):
                     log(f"  [{count}/{total}] {sid} ✓ ({size_mb:.1f}MB)")
                     if size_mb < 0.05:
                         log(f"    ⚠️ 文件极小，可能无运动")
+                    # 视频复制成功 → kill ComfyUI 释放内存/SWP
+                    _kill_comfyui()
+                    log(f"    ⏹ ComfyUI 已停止 (释放内存)")
                 else:
                     log(f"  [{count}/{total}] {sid} 无输出")
-                    _save_placeholder_video(shot, out, num_frames)
+                    _save_placeholder_video(shot, out, shot.get("duration_seconds", 6) * _fps)
 
             except Exception as e:
                 log(f"  [{count}/{total}] {sid} 失败: {e}")
-                _save_placeholder_video(shot, out, num_frames)
+                # 超时后检查 ComfyUI 是否已生成视频（可能轮询太慢）
+                video_output = _check_existing_output(completion, prompt_id) if 'completion' in dir() else None
+                if not video_output:
+                    # 检查 ComfyUI output 目录是否有最新文件
+                    video_output = _poll_comfyui_output()
+                if video_output and os.path.isfile(video_output):
+                    shutil.copy2(video_output, out)
+                    size_mb = os.path.getsize(out) / 1e6
+                    log(f"  [{count}/{total}] {sid} ✓ 超时后找到 ({size_mb:.1f}MB)")
+                    _kill_comfyui()
+                    log(f"    ⏹ ComfyUI 已停止 (释放内存)")
+                else:
+                    _save_placeholder_video(shot, out, shot.get("duration_seconds", 6) * _fps)
+                    log(f"  [{count}/{total}] {sid} 使用占位视频")
 
     log("视频生成完成")
+
+
+def _kill_comfyui():
+    """Kill ComfyUI 进程释放内存/SWP"""
+    try:
+        subprocess.run(
+            'pkill -f "main.py.*ComfyUI" 2>/dev/null; pkill -f "python.*main.py" 2>/dev/null',
+            shell=True, timeout=10
+        )
+        # 强制清理残留
+        subprocess.run(
+            'pkill -9 -f "main.py" 2>/dev/null',
+            shell=True, timeout=5
+        )
+        log("    🔄 ComfyUI 进程已清理，等待 SWAP 释放...")
+        time.sleep(5)  # 给系统时间释放内存
+    except Exception as e:
+        log(f"    ⚠️ 清理 ComfyUI 失败: {e}")
+
+
+def _restart_comfyui():
+    """调用桌面 WAN2.2-F16.command 重启 ComfyUI（kill 旧进程 → 释放内存 → 启动新实例）"""
+    # Kill 旧进程
+    _kill_comfyui()
+    # 启动 ComfyUI（通过桌面 .command 文件，会在独立终端窗口中运行）
+    log("    🚀 启动 ComfyUI (WAN2.2-F16.command)...")
+    try:
+        subprocess.Popen(
+            ['open', '-a', 'Terminal', '/Users/heipi/Desktop/WAN2.2-F16.command'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # 给 .command 文件时间执行 pkill + 启动
+        time.sleep(5)
+    except Exception as e:
+        log(f"    ⚠️ 启动 ComfyUI 失败: {e}")
+
+
+def _wait_for_comfyui(timeout=300):
+    """等待 ComfyUI 真正就绪（连续3次成功提交空请求）"""
+    import urllib.error
+    start = time.time()
+    success_count = 0
+    while time.time() - start < timeout:
+        try:
+            test_payload = json.dumps({"prompt": {}}).encode()
+            req = urllib.request.Request(
+                f"{COMFYUI_URL}/prompt",
+                data=test_payload,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                success_count += 1
+            # 连续3次成功才认为真正就绪（避免端口监听但队列未就绪）
+            if success_count >= 3:
+                return True
+        except urllib.error.HTTPError:
+            success_count += 1
+            if success_count >= 3:
+                return True
+        except:
+            success_count = 0  # 重置计数
+        time.sleep(3)
+    return False
+
+
+def _get_swap_used_gb():
+    """获取当前 swap 使用量（GB）"""
+    try:
+        result = subprocess.run(
+            ['sysctl', 'vm.swapusage'],
+            capture_output=True, text=True, timeout=5
+        )
+        # 输出格式: vm.swapusage: total = 3072.00M  used = 1829.50M  free = 1242.50M  (encrypted)
+        output = result.stdout
+        import re
+        match = re.search(r'used\s*=\s*([\d.]+)M', output)
+        if match:
+            return float(match.group(1)) / 1024  # MB → GB
+    except:
+        pass
+    return 0
+
+
+def _purge_swap():
+    """主动执行 sudo purge 降低 swap"""
+    try:
+        result = subprocess.run(
+            ['bash', '-c', 'printf "55709521pingguo\n" | sudo -S purge'],
+            capture_output=True, text=True, timeout=30, shell=True
+        )
+        return result.returncode == 0
+    except:
+        return False
+
+
+def _wait_for_swap_release(limit_gb=3, timeout=300):
+    """等待 swap 使用量降到 limit_gb GB 以下
+    
+    策略: 至少等待 30s，期间每 30s 主动 purge 一次。
+    只有当 swap < limit_gb 才继续，超时则最后再 purge 一次。
+    """
+    start = time.time()
+    last_purge_time = 0
+    min_wait = 30  # 至少等待 30 秒
+
+    # 第一阶段: 至少等 min_wait 秒，期间每 30 秒 purge
+    while time.time() - start < min_wait:
+        time.sleep(5)
+        elapsed = time.time() - start
+        # 每 30 秒主动 purge（包括 0s 时先 purge 一次）
+        if elapsed - last_purge_time >= 30 or last_purge_time == 0:
+            log(f"    🔧 主动 purge (已等 {elapsed:.0f}s)...")
+            if _purge_swap():
+                log(f"    🔧 purge 完成")
+            else:
+                log(f"    ⚠️ purge 失败或超时")
+            last_purge_time = elapsed
+            time.sleep(3)  # 等 purge 生效
+
+    # 第二阶段: 检查 swap 是否安全
+    swap_gb = _get_swap_used_gb()
+    if swap_gb < limit_gb:
+        log(f"    ✅ SWAP {swap_gb:.1f}GB < {limit_gb}GB — 安全 (等待了 {time.time()-start:.0f}s)")
+        return True
+
+    # 第三阶段: 继续等待，每 30 秒再 purge，直到 timeout
+    log(f"    ⏳ SWAP {swap_gb:.1f}GB 仍高于 {limit_gb}GB，继续降压...")
+    while time.time() - start < timeout:
+        time.sleep(5)
+        elapsed = time.time() - start
+        swap_gb = _get_swap_used_gb()
+        if swap_gb < limit_gb:
+            log(f"    ✅ SWAP {swap_gb:.1f}GB < {limit_gb}GB — 安全 (等待了 {elapsed:.0f}s)")
+            return True
+        # 每 30 秒再 purge 一次
+        if elapsed - last_purge_time >= 30:
+            log(f"    🔧 主动 purge (已等 {elapsed:.0f}s)...")
+            if _purge_swap():
+                log(f"    🔧 purge 完成")
+            last_purge_time = elapsed
+            time.sleep(3)
+
+    # 超时: 最后再 purge 一次
+    log(f"    ⚠️ SWAP 等待超时 ({timeout}s)，最后强制 purge...")
+    _purge_swap()
+    time.sleep(5)
+    swap_gb = _get_swap_used_gb()
+    if swap_gb < limit_gb:
+        log(f"    ✅ purge 后 SWAP {swap_gb:.1f}GB — 安全")
+        return True
+
+    log(f"    ⚠️ 无法降低 SWAP (当前 {swap_gb:.1f}GB)，继续（可能 thrashing）")
+    return False
+
+def _check_existing_output(completion, prompt_id):
+    """从已完成的 completion 数据中找视频输出"""
+    if not completion:
+        return None
+    outputs = completion.get("outputs", {})
+    for nid, nout in outputs.items():
+        if "gifs" in nout:
+            gifs = nout["gifs"]
+            if isinstance(gifs, list) and gifs:
+                video_output = gifs[0]
+                if isinstance(video_output, dict):
+                    video_output = video_output.get("fullpath", "")
+                if video_output and os.path.isfile(video_output):
+                    return video_output
+    return None
+
+
+def _poll_comfyui_output():
+    """轮询 ComfyUI output 目录找最新视频"""
+    import glob as _glob
+    out_dir = os.path.expanduser("~/ComfyUI/output")
+    if not os.path.isdir(out_dir):
+        # 尝试其他常见路径
+        for alt in ["/Users/heipi/ComfyUI/output"]:
+            if os.path.isdir(alt):
+                out_dir = alt
+                break
+    if not os.path.isdir(out_dir):
+        return None
+    files = _glob.glob(os.path.join(out_dir, "wan22_*.mp4"))
+    if files:
+        # 取最新的
+        files.sort(key=os.path.getmtime, reverse=True)
+        return files[0]
+    return None
 
 
 if __name__ == "__main__":
