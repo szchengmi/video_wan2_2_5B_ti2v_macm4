@@ -303,14 +303,14 @@ def _build_wan22_workflow(positive_prompt, negative_prompt,
                            width, height, frames,
                            steps, cfg, sampler, scheduler, shift, seed):
     """
-    Wan2.2 TI2V 工作流 (fp16 safetensors)
+    Wan2.2 TI2V 工作流（自动适配 fp16 / GGUF）
 
     节点连接:
-      1: UNETLoader → 6: ModelSamplingSD3.model
+      1: UNETLoader / UnetLoaderGGUF → 6: ModelSamplingSD3.model
       2: CLIPLoader → 4,5: CLIPTextEncode.clip
       3: VAELoader → 7: Wan22ImageToVideoLatent.vae, 9: VAEDecode.vae
-      4: CLIPTextEncode (positive) → 7: Wan22ImageToVideoLatent
-      5: CLIPTextEncode (negative) → 7: Wan22ImageToVideoLatent
+      4: CLIPTextEncode (positive) → 8: KSampler
+      5: CLIPTextEncode (negative) → 8: KSampler
       6: ModelSamplingSD3 → 8: KSampler.model  (★ shift 参数在这里)
       7: Wan22ImageToVideoLatent → 8: KSampler.latent_image
       8: KSampler → 9: VAEDecode.samples
@@ -323,6 +323,13 @@ def _build_wan22_workflow(positive_prompt, negative_prompt,
     clip_name = os.path.basename(clip_path)
     vae_name = os.path.basename(vae_path)
 
+    # 根据文件扩展名选择 UNET 节点类型
+    is_gguf = unet_path.lower().endswith(".gguf")
+    unet_node_type = "UnetLoaderGGUF" if is_gguf else "UNETLoader"
+    unet_inputs = {"unet_name": unet_name}
+    if not is_gguf:
+        unet_inputs["weight_dtype"] = "default"
+
     # Wan22ImageToVideoLatent 的 latent 参数
     # 48-channel latent, 16x spatial downsample
     lat_h = height // 16
@@ -331,8 +338,8 @@ def _build_wan22_workflow(positive_prompt, negative_prompt,
 
     workflow = {
         "1": {
-            "class_type": "UNETLoader",
-            "inputs": {"unet_name": unet_name, "weight_dtype": "default"}
+            "class_type": unet_node_type,
+            "inputs": unet_inputs
         },
         "2": {
             "class_type": "CLIPLoader",
