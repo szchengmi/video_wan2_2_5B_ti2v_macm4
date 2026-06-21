@@ -489,6 +489,7 @@ def main(storyboard=None):
     style_name = storyboard.get("style", "未指定")
     log(f"模型: {model_name} | {w}x{h} | {_default_num_frames}f (默认) | {steps}步 | CFG={cfg} | shift={shift} | 风格: {style_name}")
 
+    total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
     count = 0
     for scene in storyboard.get("scenes", []):
         for shot in scene.get("shots", []):
