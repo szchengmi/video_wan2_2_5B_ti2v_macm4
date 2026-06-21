@@ -299,8 +299,10 @@ def _find_wan22_models(model_name=None):
                 if result["unet"] is None and "decoder.safetensors" in fl and "wan2.2" in ml:
                     result["unet"] = fp
 
-            # CLIP: umt5_xxl 或 t5xxl
-            if result["clip"] is None and ("umt5_xxl" in fl or "t5xxl" in fl):
+            # CLIP: 优先 umt5_xxl，排除 t5xxl_um（损坏的副本）
+            if result["clip"] is None and ("umt5_xxl" in fl):
+                result["clip"] = fp
+            elif result["clip"] is None and ("t5xxl" in fl) and "umt5_xxl" not in fl and "t5xxl_um" not in fl:
                 result["clip"] = fp
 
             # VAE: 根据 model_name 匹配
