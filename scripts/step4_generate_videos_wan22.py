@@ -223,8 +223,10 @@ def _start_comfyui():
 # 模型查找
 # ============================================================
 
-def _find_wan22_models():
-    """查找 Wan2.2 模型文件，兼容 Mac 本地和 Kaggle 路径"""
+def _find_wan22_models(model_name=None):
+    """查找模型文件，兼容 Mac 本地和 Kaggle 路径
+    model_name: 如 'wan2.2-5b-f16', 'wan2.1-1.3b-f16' 等，决定搜索哪个 UNET/VAE
+    """
     search_paths = [WAN22_MODELS_DIR]
 
     # Mac 本地: 模型在 models/unet/, models/vae/, models/clip/, models/text_encoders/
@@ -252,6 +254,26 @@ def _find_wan22_models():
             if os.path.isdir(d):
                 search_paths.append(d)
 
+    # 根据 model_name 决定 UNET/VAE 关键词
+    if model_name:
+        ml = model_name.lower().replace("-", "_").replace(".", "_")
+        # 提取模型系列: wan2.2-5b → wan2.2_5b; wan2.1-1.3b → wan2.1_1.3b
+        if "wan2.2" in ml:
+            unet_keywords = ["wan2.2_ti2v_5b", "wan2.2_5b"]
+            vae_keywords = ["wan2.2_vae"]
+        elif "wan2.1" in ml:
+            unet_keywords = ["wan2.1_t2v_1.3b", "wan2.1_1.3b", "wan2.1_t2v_14b", "wan2.1_14b"]
+            vae_keywords = ["wan_2.1_vae", "wan2.1_vae"]
+        else:
+            unet_keywords = [ml]
+            vae_keywords = []
+        is_gguf = "gguf" in ml
+    else:
+        # 默认: 优先 wan2.2
+        unet_keywords = ["wan2.2_ti2v_5b", "wan2.2_5b"]
+        vae_keywords = ["wan2.2_vae"]
+        is_gguf = False
+
     result = {"unet": None, "clip": None, "vae": None}
     for base in search_paths:
         if not os.path.isdir(base):
@@ -261,17 +283,35 @@ def _find_wan22_models():
             fp = os.path.join(base, f)
             if not os.path.isfile(fp):
                 continue
-            # UNET: wan2.2_ti2v_5b+fp16 或 decoder
-            if result["unet"] is None and ("wan2.2_ti2v_5b" in fl and "fp16" in fl or
-                                          "decoder.safetensors" in fl or "decoder.gguf" in fl):
-                result["unet"] = fp
-            # CLIP: umt5_xxl
-            elif result["clip"] is None and "umt5_xxl" in fl:
+
+            # UNET: 根据 model_name 匹配
+            if result["unet"] is None:
+                for kw in unet_keywords:
+                    if kw in fl:
+                        # fp16 匹配 fp16，gguf 匹配 gguf
+                        if is_gguf and "gguf" in fl:
+                            result["unet"] = fp
+                            break
+                        elif not is_gguf and "fp16" in fl:
+                            result["unet"] = fp
+                            break
+                # 也匹配 decoder.safetensors 作为 fallback（Wan2.2）
+                if result["unet"] is None and "decoder.safetensors" in fl and "wan2.2" in ml:
+                    result["unet"] = fp
+
+            # CLIP: umt5_xxl 或 t5xxl
+            if result["clip"] is None and ("umt5_xxl" in fl or "t5xxl" in fl):
                 result["clip"] = fp
-            # VAE: wan2.2_vae 或 dvae
-            elif result["vae"] is None and ("wan2.2_vae" in fl or
-                                            "dvae.safetensors" in fl or "dvae.gguf" in fl):
-                result["vae"] = fp
+
+            # VAE: 根据 model_name 匹配
+            if result["vae"] is None:
+                for kw in vae_keywords:
+                    if kw in fl:
+                        result["vae"] = fp
+                        break
+                # fallback: dvae
+                if result["vae"] is None and "dvae.safetensors" in fl and "wan2.2" in ml:
+                    result["vae"] = fp
     return result
 
 
@@ -483,7 +523,7 @@ def main(storyboard=None):
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
 
     # 模型
-    models = _find_wan22_models()
+    models = _find_wan22_models(model_name)
     for name, path in [("UNET", models["unet"]), ("CLIP", models["clip"]), ("VAE", models["vae"])]:
         if not path:
             log(f"  ❌ {name} 未找到")
@@ -496,6 +536,25 @@ def main(storyboard=None):
     steps = int(os.environ.get("WAN22_STEPS", "20"))
     cfg = float(os.environ.get("WAN22_CFG", "5.0"))
     shift = float(os.environ.get("WAN22_SHIFT", "8.0"))
+
+    # 启动时健康检查：等待 ComfyUI API 就绪（加载大模型可能需要时间）
+    import urllib.request as _urllib_req
+    _health_url = f"{COMFYUI_URL}/system_stats"
+    _wait = 0
+    while _wait < 120:  # 最多等 120 秒
+        try:
+            req = _urllib_req.Request(_health_url)
+            _opener = _LocalOpener()
+            resp = _opener.open(req, timeout=5)
+            if resp.status == 200:
+                log(f"  ✅ ComfyUI API 就绪 (等待了 {_wait}s)")
+                break
+        except Exception:
+            import time as _time
+            _time.sleep(5)
+            _wait += 5
+    else:
+        log("  ⚠️ ComfyUI API 未在 120s 内就绪，继续尝试...")
 
     # 尺寸映射
     SIZE_MAP = {1: (384, 384), 2: (834, 480), 3: (480, 834), 4: (576, 320), 5: (384, 640)}
@@ -531,6 +590,24 @@ def main(storyboard=None):
             # ComfyUI 由 kaggle_pipeline 统一启动（SWAP > 3G 才重启）
 
             prompt_base = shot.get('prompt', '')
+            print(f"\n  [DEBUG] shot={shot['shot_id']} prompt_base={prompt_base[:120]}")
+
+            # 从 audio_events 提取叙事内容注入 prompt（区分度关键）
+            audio_events = shot.get('audio_events', {})
+            if isinstance(audio_events, dict):
+                audio_descs = []
+                for dia in audio_events.get('dialogue', []):
+                    if dia.get('lines'):
+                        audio_descs.append(f"say \"{dia['lines']}\"")
+                for vo in audio_events.get('VO', []):
+                    if vo.get('lines'):
+                        audio_descs.append(f"narrate \"{vo['lines']}\"")
+                for sfx in audio_events.get('SFX', []):
+                    if sfx.get('sound'):
+                        audio_descs.append(f"sound effect: {sfx['sound']}")
+                if audio_descs:
+                    prompt_base = f"{prompt_base}, {', '.join(audio_descs)}"
+
             if 'anime style' not in prompt_base and 'style' not in storyboard:
                 # 兼容旧 storyboard 无风格字段的情况，追加默认后缀
                 video_prompt = f"{prompt_base}, smooth motion, cinematic, high quality"
@@ -544,6 +621,8 @@ def main(storyboard=None):
             # 动态帧数：根据镜头 duration_seconds 计算
             duration_seconds = shot.get("duration_seconds", 6)
             num_frames = max(int(duration_seconds * _fps), 9)
+            print(f"  [DEBUG] shot={shot['shot_id']} seed={seed} dur={duration_seconds}s frames={num_frames}")
+            print(f"  [DEBUG] prompt={video_prompt[:160]}")
 
             workflow = _build_wan22_workflow(
                 positive_prompt=video_prompt,
@@ -583,9 +662,6 @@ def main(storyboard=None):
                     log(f"  [{count}/{total}] {sid} ✓ ({size_mb:.1f}MB)")
                     if size_mb < 0.05:
                         log(f"    ⚠️ 文件极小，可能无运动")
-                    # 视频复制成功 → kill ComfyUI 释放内存/SWP
-                    _kill_comfyui()
-                    log(f"    ⏹ ComfyUI 已停止 (释放内存)")
                 else:
                     log(f"  [{count}/{total}] {sid} 无输出")
                     _save_placeholder_video(shot, out, shot.get("duration_seconds", 6) * _fps)
@@ -601,11 +677,13 @@ def main(storyboard=None):
                     shutil.copy2(video_output, out)
                     size_mb = os.path.getsize(out) / 1e6
                     log(f"  [{count}/{total}] {sid} ✓ 超时后找到 ({size_mb:.1f}MB)")
-                    _kill_comfyui()
-                    log(f"    ⏹ ComfyUI 已停止 (释放内存)")
                 else:
                     _save_placeholder_video(shot, out, shot.get("duration_seconds", 6) * _fps)
                     log(f"  [{count}/{total}] {sid} 使用占位视频")
+
+    # 所有镜头完成后统一清理一次 ComfyUI
+    _kill_comfyui()
+    log("    🔄 ComfyUI 进程已清理，释放内存/SWP")
 
     log("视频生成完成")
 

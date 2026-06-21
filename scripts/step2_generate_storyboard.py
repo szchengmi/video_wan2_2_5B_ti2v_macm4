@@ -32,11 +32,19 @@ def generate_storyboard(script_data, style_name=None):
             "mood": scene["mood"],
             "shots": []
         }
+        # 角色名映射: 中文 → 拼音 (CHARACTER_PROMPTS 的 key)
+        CHAR_NAME_MAP = {
+            "小明": "xiaoming", "小丽": "xiaoli", "王总": "boss_wang",
+            "xiaoming": "xiaoming", "xiaoli": "xiaoli", "boss_wang": "boss_wang",
+        }
+
         for shot in scene.get("shots", []):
             char = shot.get("character", "none")
             # 兼容 character 是列表的情况 (如 ["xiaoming"])
             if isinstance(char, list):
                 char = char[0] if char else "none"
+            # 中文角色名 → 拼音（匹配 CHARACTER_PROMPTS key）
+            char = CHAR_NAME_MAP.get(char, char)
             shot_type = shot.get("shot_type", "medium_shot")
             emotion = shot.get("emotion", "calm")
             if char != "none":

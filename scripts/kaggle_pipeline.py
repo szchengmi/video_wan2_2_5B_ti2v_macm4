@@ -43,6 +43,7 @@ def main():
     parser.add_argument("--style", type=int, default=1, help="风格: 1=二次元 2=古代田园 3=赛博朋克 4=动漫 5=类真人 6=火柴人")
     parser.add_argument("--model", type=int, default=1, help="模型选择: 1=Wan2.2-5B-F16 2=Wan2.2-5B-GGUF 3=Wan2.1-1.3B-F16 4=Wan2.1-14B-GGUF")
     parser.add_argument("--size", type=int, default=2, help="尺寸: 1=384×384 2=834×480 3=480×834 4=576×320 5=384×640")
+    parser.add_argument("--step", type=int, default=None, help="指定单步运行: 1=剧本 2=分镜 4=视频 5=配音 6=合成 (不指定=全部运行)")
     args = parser.parse_args()
 
     # 模型选择映射
@@ -74,9 +75,12 @@ def main():
     log(f"  尺寸: {args.size}={SIZE_NAMES.get(args.size, '?')} | 可用: 1=384×384 2=834×480 3=480×834 4=576×320 5=384×640")
     log(f"  风格: {args.style}={style_name} | 可用: 1=二次元 2=古代田园 3=赛博朋克 4=动漫 5=类真人 6=火柴人")
     log(f"  时长: {args.duration}秒")
+    if args.step:
+        log(f"  单步模式: 只运行 Step {args.step}")
+    log()
 
-    # 清除旧输出
-    if args.force:
+    # 清除旧输出（仅全量运行或 Step1 时清理，单步模式不删）
+    if args.force and args.step is None or args.step == 1:
         log("⚠️ 强制重新生成")
         ep_dir = get_dirs(EPISODE_NUM)["episode"]
         if os.path.isdir(ep_dir):
@@ -97,7 +101,7 @@ def main():
             log(f"\n⚠️ 缺少 {len(missing)} 个模型文件，开始下载...")
             subprocess.run(["python", "download_models.py"], cwd=_SCRIPT_DIR, check=True)
         else:
-            log("✅ 模型文件已存在")
+            log("  ✅ 模型文件已存在")
 
     # 安装依赖
     log("\n安装依赖...")
@@ -107,114 +111,142 @@ def main():
 
     t0 = time.time()
 
+    # ══════════════════════════════════════════
     # Step 1: 剧本生成
-    log("\n" + "=" * 50)
-    log("Step 1: 剧本生成")
-    log("=" * 50)
-    from step1_generate_story import generate_script
-    script = generate_script(EPISODE_NUM, duration_minutes=args.duration, style=style_name)
-    log(f"剧本: {script.get('title')} | 风格: {script.get('style', style_name)}")
+    # ══════════════════════════════════════════
+    if args.step is None or args.step == 1:
+        log("\n" + "=" * 50)
+        log("Step 1: 剧本生成")
+        log("=" * 50)
+        from step1_generate_story import generate_script
+        script = generate_script(EPISODE_NUM, duration_minutes=args.duration, style=style_name)
+        log(f"剧本: {script.get('title')} | 风格: {script.get('style', style_name)}")
 
-    # 保存剧本
-    script_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_script.json"
-    save_json(script, script_path)
+        # 保存剧本
+        script_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_script.json"
+        save_json(script, script_path)
 
+    # ══════════════════════════════════════════
     # Step 2: 分镜生成
-    log("\n" + "=" * 50)
-    log("Step 2: 分镜生成")
-    log("=" * 50)
-    from step2_generate_storyboard import generate_storyboard
-    storyboard = generate_storyboard(script)
-    total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
-    log(f"分镜: {len(storyboard['scenes'])}场景 | {total}镜头")
+    # ══════════════════════════════════════════
+    if args.step is None or args.step == 2:
+        log("\n" + "=" * 50)
+        log("Step 2: 分镜生成")
+        log("=" * 50)
 
-    # 保存 storyboard
-    sb_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_storyboard.json"
-    save_json(storyboard, sb_path)
+        # 加载已有剧本（单步模式需要）
+        if args.step == 2:
+            script_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_script.json"
+            script = load_json(script_path)
+        from step2_generate_storyboard import generate_storyboard
+        storyboard = generate_storyboard(script)
+        total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
+        log(f"分镜: {len(storyboard['scenes'])}场景 | {total}镜头")
+
+        # 保存 storyboard
+        sb_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_storyboard.json"
+        save_json(storyboard, sb_path)
+    else:
+        # 非 step2 但后续步骤需要 storyboard 路径
+        sb_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_storyboard.json"
 
     # Step 3: 跳过 (Wan2.2 直接生成视频，不需要先画图)
-    log("\n" + "=" * 50)
-    log("Step 3: 画面生成 → 跳过 (Wan2.2 直接 T2V)")
-    log("=" * 50)
-
-    # Step 4~5: 检查 ComfyUI 内存，SWAP > 3G 才重启
-    import psutil
-    comfy_ps = None
-    for p in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            if p.info['cmdline'] and 'main.py' in ' '.join(p.info['cmdline']):
-                comfy_ps = p
-                break
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    if comfy_ps:
-        swap_info = psutil.swap_memory()
-        swap_used_gb = swap_info.used / (1024**3)
-        if swap_used_gb > 3:
-            log(f"⚠️ SWAP={swap_used_gb:.1f}GB > 3G，重启 ComfyUI 释放内存...")
-            comfy_ps.kill()
-            import time as _time
-            _time.sleep(5)
-            subprocess.Popen(
-                ["python", "main.py", "--fp16-unet", "--preview-method", "taesd"],
-                cwd="/Users/heipi/ComfyUI",
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            _time.sleep(120)
-            log("  ComfyUI 重启完成")
-        else:
-            log(f"SWAP={swap_used_gb:.1f}GB ≤ 3G，无需重启")
-    else:
-        log("⚠️ 未找到 ComfyUI 进程")
+    if args.step is None:
+        log("\n" + "=" * 50)
+        log("Step 3: 画面生成 → 跳过 (Wan2.2 直接 T2V)")
+        log("=" * 50)
 
     # Step 4: 视频生成 (Wan2.2 TI2V)
-    log("\n" + "=" * 50)
-    log("Step 4: 视频生成 (Wan2.2 TI2V 5B)")
-    log("=" * 50)
-    videos_dir = f"{get_dirs(EPISODE_NUM)['videos']}"
-    # 传递模型配置给 step4
-    env = os.environ.copy()
-    env["WAN22_MODEL"] = model_cfg["model_arg"]
-    env["WAN22_FPS"] = str(model_cfg["fps"])
-    env["WAN22_STEPS"] = str(model_cfg["steps"])
-    env["WAN22_CFG"] = str(model_cfg["cfg"])
-    env["WAN22_SHIFT"] = str(model_cfg["shift"])
-    env["WAN22_SIZE"] = str(args.size)
-    subprocess.run([
-        sys.executable, "step4_generate_videos_wan22.py",
-        "--storyboard", sb_path,
-        "--output-dir", videos_dir,
-    ], cwd=_SCRIPT_DIR, env=env)
+    if args.step is None or args.step == 4:
+        # Step 4~5: 检查 ComfyUI 内存，SWAP > 3G 才重启
+        import psutil
+        comfy_ps = None
+        for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if p.info['cmdline'] and 'main.py' in ' '.join(p.info['cmdline']):
+                    comfy_ps = p
+                    break
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if comfy_ps:
+            swap_info = psutil.swap_memory()
+            swap_used_gb = swap_info.used / (1024**3)
+            if swap_used_gb > 3:
+                log(f"⚠️ SWAP={swap_used_gb:.1f}GB > 3G，重启 ComfyUI 释放内存...")
+                comfy_ps.kill()
+                import time as _time
+                _time.sleep(5)
+                subprocess.Popen(
+                    ["python", "main.py", "--fp16-unet", "--preview-method", "taesd"],
+                    cwd="/Users/heipi/ComfyUI",
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                _time.sleep(120)
+                log("  ComfyUI 重启完成")
+            else:
+                log(f"SWAP={swap_used_gb:.1f}GB ≤ 3G，无需重启")
+        else:
+            log("⚠️ 未找到 ComfyUI 进程")
+
+        log("\n" + "=" * 50)
+        log("Step 4: 视频生成 (Wan2.2 TI2V 5B)")
+        log("=" * 50)
+        videos_dir = f"{get_dirs(EPISODE_NUM)['videos']}"
+        # 传递模型配置给 step4
+        env = os.environ.copy()
+        env["WAN22_MODEL"] = model_cfg["model_arg"]
+        env["WAN22_FPS"] = str(model_cfg["fps"])
+        env["WAN22_STEPS"] = str(model_cfg["steps"])
+        env["WAN22_CFG"] = str(model_cfg["cfg"])
+        env["WAN22_SHIFT"] = str(model_cfg["shift"])
+        env["WAN22_SIZE"] = str(args.size)
+        subprocess.run([
+            sys.executable, "step4_generate_videos_wan22.py",
+            "--storyboard", sb_path,
+            "--output-dir", videos_dir,
+        ], cwd=_SCRIPT_DIR, env=env)
 
     # Step 5: 配音生成 (在视频之后，根据实际视频时长调整语速)
-    log("\n" + "=" * 50)
-    log("Step 5: 配音生成")
-    log("=" * 50)
-    audio_dir = f"{get_dirs(EPISODE_NUM)['audio']}"
-    subprocess.run([
-        sys.executable, "step5_generate_audio.py",
-        "--storyboard", sb_path,
-        "--output-dir", audio_dir,
-    ], cwd=_SCRIPT_DIR)
+    if args.step is None or args.step == 5:
+        log("\n" + "=" * 50)
+        log("Step 5: 配音生成")
+        log("=" * 50)
+
+        # 单步模式：重新加载 storyboard（step5 可能回写 duration_seconds）
+        if args.step == 5:
+            sb_path = f"{get_dirs(EPISODE_NUM)['storyboard']}/episode_{EPISODE_NUM:02d}_storyboard.json"
+
+        audio_dir = f"{get_dirs(EPISODE_NUM)['audio']}"
+        subprocess.run([
+            sys.executable, "step5_generate_audio.py",
+            "--storyboard", sb_path,
+            "--output-dir", audio_dir,
+        ], cwd=_SCRIPT_DIR)
 
     # Step 6: 剪辑合成
-    log("\n" + "=" * 50)
-    log("Step 6: 剪辑合成")
-    log("=" * 50)
-    final_dir = f"{get_dirs(EPISODE_NUM)['final']}"
-    subprocess.run([
-        sys.executable, "step6_compose.py",
-        "--storyboard", sb_path,
-        "--videos-dir", videos_dir,
-        "--audio-dir", audio_dir,
-        "--output-dir", final_dir,
-    ], cwd=_SCRIPT_DIR)
+    if args.step is None or args.step == 6:
+        log("\n" + "=" * 50)
+        log("Step 6: 剪辑合成")
+        log("=" * 50)
+
+        # 单步模式：检查视频和音频目录是否有文件
+        videos_dir = f"{get_dirs(EPISODE_NUM)['videos']}"
+        audio_dir = f"{get_dirs(EPISODE_NUM)['audio']}"
+        final_dir = f"{get_dirs(EPISODE_NUM)['final']}"
+        subprocess.run([
+            sys.executable, "step6_compose.py",
+            "--storyboard", sb_path,
+            "--videos-dir", videos_dir,
+            "--audio-dir", audio_dir,
+            "--output-dir", final_dir,
+        ], cwd=_SCRIPT_DIR)
 
     # 总结
     elapsed = (time.time() - t0) / 60
     log(f"\n{'=' * 50}")
     log(f"全部完成! 耗时: {elapsed:.1f} 分钟")
-    log(f"输出: {final_dir}")
+    if args.step:
+        log(f"单步模式: 仅 Step {args.step}")
     log(f"{'=' * 50}")
 
 
