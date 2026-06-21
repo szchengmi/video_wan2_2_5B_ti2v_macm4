@@ -77,7 +77,7 @@ def main():
     log(f"  时长: {args.duration}秒")
     if args.step:
         log(f"  单步模式: 只运行 Step {args.step}")
-    log()
+    log("")
 
     # 清除旧输出（仅全量运行或 Step1 时清理，单步模式不删）
     if args.force and args.step is None or args.step == 1:
