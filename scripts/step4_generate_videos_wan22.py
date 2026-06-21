@@ -477,19 +477,26 @@ def main(storyboard=None):
             return
         log(f"  ✅ {name}: {os.path.basename(path)} ({os.path.getsize(path)/1e6:.0f}MB)")
 
-    # 参数 (对齐参考工作流的 shift=8, euler/simple)
-    w, h = 832, 480
-    # 根据每个镜头的实际时长计算帧数: num_frames = duration * 8 (8fps)
-    _fps = 8
-    _default_num_frames = 6 * _fps  # 默认6秒 = 48帧
-    steps = 20
-    cfg = 5.0
+    # 参数 — 从环境变量读取模型配置（由 kaggle_pipeline 传入）
+    model_name = os.environ.get("WAN22_MODEL", "wan2.2-5b-f16")
+    _fps = int(os.environ.get("WAN22_FPS", "8"))
+    steps = int(os.environ.get("WAN22_STEPS", "20"))
+    cfg = float(os.environ.get("WAN22_CFG", "5.0"))
+    shift = float(os.environ.get("WAN22_SHIFT", "8.0"))
+
+    # 尺寸映射
+    SIZE_MAP = {1: (384, 384), 2: (834, 480), 3: (480, 834), 4: (576, 320), 5: (384, 640)}
+    size_idx = int(os.environ.get("WAN22_SIZE", "2"))
+    w, h = SIZE_MAP.get(size_idx, (834, 480))
+
     sampler = "euler"
     scheduler = "simple"
-    shift = 8.0
+
+    # 动态帧数：根据每个镜头 duration_seconds 计算
+    _default_num_frames = 6 * _fps
 
     style_name = storyboard.get("style", "未指定")
-    log(f"参数: {w}x{h} | {_default_num_frames}f (默认) | {steps}步 | CFG={cfg} | shift={shift} | {sampler}/{scheduler} | 风格: {style_name}")
+    log(f"模型: {model_name} | {w}x{h} | {_default_num_frames}f (默认) | {steps}步 | CFG={cfg} | shift={shift} | 风格: {style_name}")
 
     count = 0
     for scene in storyboard.get("scenes", []):
@@ -508,14 +515,7 @@ def main(storyboard=None):
                 log(f"  [{count}/{total}] {sid} 覆盖占位视频 ({os.path.getsize(out)//1024}KB)")
                 os.remove(out)
 
-            # 每个镜头前启动 ComfyUI（kill 旧进程 + 释放内存/SWAP）
-            _restart_comfyui()
-            if not _wait_for_comfyui(timeout=300):
-                log(f"  [{count}/{total}] {sid} ❌ ComfyUI 启动超时")
-                _save_placeholder_video(shot, out, shot.get("duration_seconds", 6) * _fps)
-                continue
-            # 等待 SWAP 释放到安全水位（<3GB），避免推理时 thrashing
-            _wait_for_swap_release(limit_gb=3, timeout=300)
+            # ComfyUI 由 kaggle_pipeline 统一启动（SWAP > 3G 才重启）
 
             prompt_base = shot.get('prompt', '')
             if 'anime style' not in prompt_base and 'style' not in storyboard:
@@ -528,13 +528,17 @@ def main(storyboard=None):
             if isinstance(seed, str) or seed < 0:
                 seed = 42
 
+            # 动态帧数：根据镜头 duration_seconds 计算
+            duration_seconds = shot.get("duration_seconds", 6)
+            num_frames = max(int(duration_seconds * _fps), 9)
+
             workflow = _build_wan22_workflow(
                 positive_prompt=video_prompt,
                 negative_prompt=neg_prompt,
                 unet_path=models["unet"],
                 clip_path=models["clip"],
                 vae_path=models["vae"],
-                width=w, height=h, frames=shot.get("duration_seconds", 6) * _fps,
+                width=w, height=h, frames=num_frames,
                 steps=steps, cfg=cfg,
                 sampler=sampler, scheduler=scheduler,
                 shift=shift, seed=seed,
