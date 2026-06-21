@@ -46,6 +46,7 @@ def _get_kaggle_secret(key_name):
     # 方式3: 环境变量
     return os.environ.get(key_name, "")
 
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # 平台相关默认路径
