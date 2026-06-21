@@ -73,11 +73,10 @@ MODEL_PATH_MAP = {
     "wan2.2-5b-f16": {
         "unet": "unet/wan2.2_ti2v_5B_fp16.safetensors",
         "vae": "vae/wan2.2_vae.safetensors",
-        # CLIP/VAE 各模型共用
-        "clip": None,  # 占位，见 CLIP 全局设置
+        "clip": None,  # 全局 CLIP
     },
     "wan2.2-5b-gguf": {
-        "unet": "unet/wan2.2-ti2v-5b-fp32-q4_0.gguf",
+        "unet": "diffusion_models/Wan2.2-TI2V-5B-Q4_K_M.gguf",  # ← 正确路径
         "vae": "vae/wan2.2_vae.safetensors",
         "clip": None,
     },
@@ -88,7 +87,7 @@ MODEL_PATH_MAP = {
         "clip": None,
     },
     "wan2.1-14b-gguf": {
-        "unet": None,  # TODO: 待下载
+        "unet": "diffusion_models/wan2.1-i2v-14b-480p-Q3_K_M.gguf",  # ← 正确路径
         "vae": "vae/wan_2.1_vae.safetensors",
         "clip": None,
     },
