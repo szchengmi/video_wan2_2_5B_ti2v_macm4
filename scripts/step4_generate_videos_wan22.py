@@ -236,6 +236,14 @@ def _find_wan22_models():
         # 也搜索 models/ 下直接放文件的情况
         if os.path.isdir(WAN22_MODELS_DIR):
             search_paths.append(WAN22_MODELS_DIR)
+        # 搜索 /Users/heipi/asset/ (用户本地模型目录)
+        _USER_ASSET = "/Users/heipi/asset"
+        if os.path.isdir(_USER_ASSET):
+            search_paths.append(_USER_ASSET)
+            for sub in ["unet", "vae", "clip", "text_encoders"]:
+                p = os.path.join(_USER_ASSET, sub)
+                if os.path.isdir(p):
+                    search_paths.append(p)
 
     # Kaggle: 也搜索 Dataset 的 models/ 子目录
     if _IS_KAGGLE:
@@ -253,11 +261,16 @@ def _find_wan22_models():
             fp = os.path.join(base, f)
             if not os.path.isfile(fp):
                 continue
-            if result["unet"] is None and "wan2.2_ti2v_5b" in fl and "fp16" in fl:
+            # UNET: wan2.2_ti2v_5b+fp16 或 decoder
+            if result["unet"] is None and ("wan2.2_ti2v_5b" in fl and "fp16" in fl or
+                                          "decoder.safetensors" in fl or "decoder.gguf" in fl):
                 result["unet"] = fp
+            # CLIP: umt5_xxl
             elif result["clip"] is None and "umt5_xxl" in fl:
                 result["clip"] = fp
-            elif result["vae"] is None and "wan2.2_vae" in fl:
+            # VAE: wan2.2_vae 或 dvae
+            elif result["vae"] is None and ("wan2.2_vae" in fl or
+                                            "dvae.safetensors" in fl or "dvae.gguf" in fl):
                 result["vae"] = fp
     return result
 

@@ -68,6 +68,32 @@ def generate_storyboard(script_data, style_name=None):
             dur = shot.get("duration_seconds", 3)
             dur = max(1, min(6, dur))  # clamp to [1, 6]
 
+            # 提取 audio_events（Gemini 输出）或从旧字段兜底构造
+            audio_events = shot.get("audio_events")
+            if not audio_events or not isinstance(audio_events, dict):
+                # 兜底：从 dialogue/narration/subtitle 旧字段构造 audio_events
+                audio_events = {"dialogue": [], "VO": [], "SFX": [], "Atmos": []}
+                # 把旧 dialogue 字段塞进 audio_events.dialogue
+                old_dialogue = shot.get("dialogue", "")
+                if old_dialogue and isinstance(old_dialogue, str) and old_dialogue.strip():
+                    audio_events["dialogue"].append({
+                        "role": char if char != "none" else "xiaoming",
+                        "lines": old_dialogue.strip(),
+                        "timecode": f"0.5-{min(dur-0.5, 3.0):.1f}",
+                        "emotion": emotion,
+                        "speed": 0
+                    })
+                # 把旧 narration 字段塞进 audio_events.VO
+                old_narration = shot.get("narration", "")
+                if old_narration and isinstance(old_narration, str) and old_narration.strip():
+                    audio_events["VO"].append({
+                        "role": "narrator",
+                        "lines": old_narration.strip(),
+                        "timecode": f"0.3-{min(dur-0.5, 4.0):.1f}",
+                        "emotion": "平静",
+                        "speed": -1
+                    })
+
             scene_data["shots"].append({
                 "shot_id": shot["shot_id"],
                 "shot_type": shot_type,
@@ -85,6 +111,7 @@ def generate_storyboard(script_data, style_name=None):
                 "description": shot.get("description", ""),
                 "action": shot.get("action", ""),
                 "emotion": emotion,
+                "audio_events": audio_events,
                 "steps": IMAGE_STEPS,
                 "guidance": IMAGE_GUIDANCE
             })

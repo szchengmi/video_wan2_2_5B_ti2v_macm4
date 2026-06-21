@@ -10,23 +10,6 @@ import json
 import re
 
 
-def _calc_scene_limits(duration_sec):
-    """根据时长返回场景数量限制说明（每个场景约3-5秒）"""
-    if duration_sec <= 3:
-        return "1个场景"
-    elif duration_sec <= 6:
-        return "1-2个场景"
-    elif duration_sec <= 8:
-        return "2个场景"  # 8秒最佳：2场景各4秒
-    elif duration_sec <= 10:
-        return "2-3个场景"
-    elif duration_sec <= 15:
-        return "3个场景"
-    else:
-        scenes = duration_sec // 4
-        return f"{max(1, scenes-1)}-{scenes+1}个场景"
-
-
 def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
                     duration_minutes=3, style="二次元"):
     from google import genai
@@ -37,52 +20,107 @@ def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
     # 每个镜头 duration_seconds 在剧本中指定，总时长 ≈ 所有镜头之和
     duration_sec = int(duration_minutes)  # 参数名保留但实际是秒
 
-    prompt = f"""你是一个专业的中文短剧编剧。请为一部{genre}题材的AI短剧写第{episode_num}集的完整剧本。
+    prompt = f"""你是一个专业的中文短剧编剧和声音设计师。请为一部{genre}题材的AI短剧写第{episode_num}集的完整剧本。
 
 角色: 小明(28岁程序员,内向善良,戴眼镜短发) | 小丽(26岁设计师,活泼开朗,长发) | 王总(45岁总监,严厉公正)
 场景: office(现代办公室) cafe(温馨咖啡馆) park(城市公园) apartment(温馨公寓) street(城市街道)
 
-要求（必须严格遵守，否则输出无效）:
-- 总时长严格等于{duration_sec}秒，所有镜头 duration_seconds 之和必须正好等于{duration_sec}
-- 每个镜头 duration_seconds 在 2-4 秒之间（最少2秒，最多4秒）
-- 每个场景包含 1-2 个镜头，每个场景总时长约 3-5 秒
-- 场景数量严格限制：{duration_sec}秒 → {_calc_scene_limits(duration_sec)}
-- 场景数 = 镜头数（每个镜头一个场景）
-- 完整故事线+悬念结尾
-- 严禁超过或低于目标时长
-- 示例：8秒 → 2个场景(各1个镜头4秒) 或 1个场景(2个镜头各4秒) 或 2个场景(第1场景2镜头共5秒+第2场景2镜头共3秒)
-- 不允许多余镜头或场景：场景数和镜头数必须正好符合上述规则
-- **文本字数控制**：
-  - 用于生成音频的最终文本字数 = duration_seconds × 4（中文语速约4字/秒）
-  - 优先使用 dialogue（角色对话）；dialogue 为空则用 narration（旁白）
-  - 总字数严格控制在 duration_seconds × 4 以内，保证配音时长与视频时长匹配
-  - dialogue 和 narration 不能同时为空
+═══════════════════════════════════════════
+节奏规划原则（重要！）
+═══════════════════════════════════════════
+1. 镜头时长由内容决定，不是固定值：
+   - 对话密集场景：4-8 秒（让观众看清画面+听清对话）
+   - 纯环境/过渡镜头：2-4 秒
+   - 动作/紧张场景：3-5 秒，可快速切换
+   - 建立镜头（每场第一个）：稍长 4-6 秒
+2. 场景规划：
+   - 不要频繁换场景，一个场景内可以有多个长镜头
+   - 用不同景别讲述故事：建立→对话→反应→特写，避免无意义切镜
+   - 总镜头数由 Gemini 根据故事节奏自然决定，不要刻意凑数也不要刻意限制
+   - 长镜头优先：一个镜头可以持续 6-12 秒，给观众沉浸感
+   - 只有当视角/地点/时间确实需要变化时才切换镜头
+3. 留白与呼吸：
+   - 不要填满整个 duration，留 10-15% 给沉默/留白
+   - 对话之间有 0.3-0.8 秒的停顿间隔
+   - 镜头切换处留 0.2-0.5 秒黑场过渡
 
-纯JSON输出:
-{{"episode": {episode_num}, "title": "标题", "style": "{style}", "scenes": [{{"scene_id": "scene_1", "location": "office",
-"time_of_day": "morning", "lighting": "自然光", "mood": "氛围",
-"shots": [{{"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-"duration_seconds": 3, "description": "画面描述", "character": "xiaoming",
-"action": "动作", "dialogue": "对话", "narration": "旁白",
-"emotion": "情绪", "subtitle": "字幕"}}]}}], "next_episode_hook": "下集预告"}}"""
+═══════════════════════════════════════════
+音频设计原则（重要！）
+═══════════════════════════════════════════
+每个镜头必须设计声音层次，用 audio_events 对象详细描述：
+
+audio_events 包含 4 个子数组（必须全部存在，无内容写空数组 []）：
+
+1. dialogue（角色对话）：有角色台词时填写
+   - role: 角色拼音 (xiaoming/xiaoli/boss_wang)
+   - lines: 台词内容
+   - timecode: "开始秒-结束秒" 格式，如 "0.5-2.3"
+   - emotion: 情绪（参考下方情绪词）
+   - speed: 语速偏移，正数=快，负数=慢，如 +3/-1/0
+
+2. VO（旁白）：有旁白时填写
+   - role: 固定 "narrator"
+   - lines: 旁白内容
+   - timecode: 时间范围
+   - emotion: 情绪
+   - speed: 语速偏移
+
+3. SFX（音效）：有音效时填写（如雷声、关门、脚步声、手机响等）
+   - sound: 音效名称标识
+   - path: 音效文件路径，如 "sound/door_close.mp3"
+   - timecode: 时间范围
+   - volume: 音量 0.0-1.0
+
+4. Atmos（环境音）：有环境音时填写（如街道噪音、雨声、室内空调声等）
+   - sound: 环境音名称标识
+   - path: 音效文件路径，如 "sound/rain.mp3"
+   - timecode: 时间范围（通常覆盖整个镜头）
+   - volume: 音量 0.0-1.0
+   - loop: 是否循环播放 true/false
+
+时间码规则：
+- 从 0.0 开始计算，第一个声音元素从 0.0 或稍后开始
+- 对话之间留 0.3-0.8 秒间隔
+- 所有时间码不能超过 duration_seconds
+- 最后一个声音结束后留 0.3-0.5 秒静音
+
+情绪词库：happy/sad/angry/surprised/nervous/calm/determined/embarrassed/thoughtful/紧张/感激/抒情/平静/恐惧/愤怒/温柔/急迫
+
+duration_seconds 计算：
+- Gemini 根据音频时间码自行计算：duration = max(所有事件结束时间) + 0.5s 留白
+- 确保 duration 合理（2-8秒之间），与镜头内容匹配
+- 总时长约 {duration_sec} 秒（所有镜头之和）
+
+═══════════════════════════════════════════
+纯JSON输出（不要 markdown 代码块）
+═══════════════════════════════════════════
+shots 结构: {{"shot_id","shot_type","camera_movement","duration_seconds","description","character","action","emotion","audio_events","subtitle"}}
+audio_events 结构: {{"dialogue":[{{"role","lines","timecode","emotion","speed"}}],"VO":[...],"SFX":[...],"Atmos":[...]}}
+示例: {{"episode":1,"title":"标题","style":"{style}","scenes":[{{"scene_id":"scene_1","location":"office","time_of_day":"morning","lighting":"自然光","mood":"氛围","shots":[{{"shot_id":"shot_1","shot_type":"medium_shot","camera_movement":"static","duration_seconds":5.0,"description":"画面描述","character":"xiaoming","action":"动作","emotion":"calm","audio_events":{{"dialogue":[{{"role":"xiaoming","lines":"台词","timecode":"0.5-2.3","emotion":"紧张","speed":0}}],"VO":[],"SFX":[],"Atmos":[]}},"subtitle":"字幕"}}],"next_hook":"下集预告"}}]}}
+"""
 
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[prompt],
         config={
-            "temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 16384,
+            "temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 65536,
         },
     )
     text = response.text.strip()
+    if not text:
+        print(f"[GEMINI] 返回空文本，fallback")
+        return _get_fallback_script(episode_num, genre, duration_sec, style)
+    print(f"[GEMINI] 返回前200字: {text[:200]}")
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
 
     try:
         script = json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        print(f"[GEMINI] JSON解析失败: {e}")
+        print(f"[GEMINI] 后200字: ...{text[-200:]}")
     else:
         return _fix_script(script, duration_sec)
     # 修复截断JSON：补全未闭合的花括号和方括号
@@ -115,198 +153,86 @@ def generate_script(episode_num=1, genre="urban_romance", prev_summary="",
 
 
 def _fix_script(script, target_duration):
-    """修正剧本：确保总时长、场景数、镜头数符合约束"""
+    """修正剧本：确保每个镜头有 audio_events 结构，并修正总时长"""
     scenes = script.get("scenes", [])
     if not scenes:
         return _get_fallback_script(script.get("episode", 1), "urban_romance", target_duration, script.get("style", "二次元"))
 
-    # 计算每个场景的总时长和实际镜头数
-    scene_durations = []
+    # 确保每个镜头有 audio_events 结构
     for sc in scenes:
-        shots = sc.get("shots", [])
-        total = sum(s.get("duration_seconds", 3) for s in shots)
-        scene_durations.append({"scene": sc, "shots": shots, "duration": total})
+        for shot in sc.get("shots", []):
+            if "audio_events" not in shot or not isinstance(shot.get("audio_events"), dict):
+                # 从旧字段构造 audio_events
+                audio_events = {"dialogue": [], "VO": [], "SFX": [], "Atmos": []}
+                old_dialogue = shot.get("dialogue", "")
+                old_narration = shot.get("narration", "")
+                char = shot.get("character", "xiaoming")
+                emotion = shot.get("emotion", "calm")
+                dur = shot.get("duration_seconds", 5)
+                if old_dialogue and isinstance(old_dialogue, str) and old_dialogue.strip():
+                    audio_events["dialogue"].append({
+                        "role": char if char != "none" else "xiaoming",
+                        "lines": old_dialogue.strip(),
+                        "timecode": f"0.5-{min(dur-0.5, 3.0):.1f}",
+                        "emotion": emotion,
+                        "speed": 0
+                    })
+                if old_narration and isinstance(old_narration, str) and old_narration.strip():
+                    audio_events["VO"].append({
+                        "role": "narrator",
+                        "lines": old_narration.strip(),
+                        "timecode": f"0.3-{min(dur-0.5, 4.0):.1f}",
+                        "emotion": "平静",
+                        "speed": -1
+                    })
+                shot["audio_events"] = audio_events
 
-    actual_total = sum(sd["duration"] for sd in scene_durations)
-
-    # 1. 如果总时长不对，按比例缩放每个镜头
+    # 修正总时长（最后一个镜头吸收误差）
+    actual_total = sum(s.get("duration_seconds", 5) for sc in scenes for s in sc.get("shots", []))
     if actual_total != target_duration and actual_total > 0:
-        ratio = target_duration / actual_total
-        for sd in scene_durations:
-            new_total = 0
-            for i, shot in enumerate(sd["shots"]):
-                if i == len(sd["shots"]) - 1:
-                    # 最后一个镜头吸收误差
-                    sd["shots"][i]["duration_seconds"] = max(2, min(4, target_duration - new_total))
-                    new_total += sd["shots"][i]["duration_seconds"]
-                else:
-                    new_dur = max(2, min(4, round(shot.get("duration_seconds", 3) * ratio)))
-                    sd["shots"][i]["duration_seconds"] = new_dur
-                    new_total += new_dur
-            sd["duration"] = new_total
-
-    # 2. 修正场景数：8秒目标 → 2个场景
-    expected_scenes = _target_scene_count(target_duration)
-    actual_scenes = len(scene_durations)
-
-    if actual_scenes > expected_scenes:
-        # 场景太多：合并相邻场景到目标数量
-        while len(scene_durations) > expected_scenes:
-            # 找到相邻两个最短场景合并
-            min_combined = float("inf")
-            merge_idx = 0
-            for i in range(len(scene_durations) - 1):
-                combined = scene_durations[i]["duration"] + scene_durations[i + 1]["duration"]
-                if combined < min_combined:
-                    min_combined = combined
-                    merge_idx = i
-            # 合并
-            merged_shots = scene_durations[merge_idx]["shots"] + scene_durations[merge_idx + 1]["shots"]
-            merged_scene = scene_durations[merge_idx]["scene"]
-            merged_scene["shots"] = merged_shots
-            merged_scene["scene_id"] = f"scene_{merge_idx + 1}"
-            scene_durations[merge_idx] = {"scene": merged_scene, "shots": merged_shots, "duration": min_combined}
-            del scene_durations[merge_idx + 1]
-
-    elif actual_scenes < expected_scenes and actual_scenes >= 1:
-        # 场景太少：拆分最长场景
-        while len(scene_durations) < expected_scenes:
-            # 找最长场景
-            longest_idx = max(range(len(scene_durations)), key=lambda i: scene_durations[i]["duration"])
-            sd = scene_durations[longest_idx]
-            if len(sd["shots"]) < 2:
-                break  # 只有一个镜头无法拆
-            # 拆分成两组
-            mid = len(sd["shots"]) // 2
-            shots_a = sd["shots"][:mid]
-            shots_b = sd["shots"][mid:]
-            dur_a = sum(s.get("duration_seconds", 3) for s in shots_a)
-            dur_b = sum(s.get("duration_seconds", 3) for s in shots_b)
-            # 创建新场景
-            new_scene = dict(sd["scene"])
-            new_scene["shots"] = shots_b
-            new_scene["scene_id"] = f"scene_{longest_idx + 2}"
-            sd["scene"]["shots"] = shots_a
-            sd["scene"]["scene_id"] = f"scene_{longest_idx + 1}"
-            sd["shots"] = shots_a
-            sd["duration"] = dur_a
-            scene_durations.insert(longest_idx + 1, {"scene": new_scene, "shots": shots_b, "duration": dur_b})
-
-    # 3. 重新编号 scene_id
-    for i, sd in enumerate(scene_durations):
-        sd["scene"]["scene_id"] = f"scene_{i + 1}"
-
-    # 4. 重新计算并修正总时长误差
-    final_total = sum(sd["duration"] for sd in scene_durations)
-    diff = target_duration - final_total
-    if diff != 0:
-        # 把误差分配到最后一个镜头的 duration_seconds
-        last_scene = scene_durations[-1]
-        last_shot = last_scene["shots"][-1]
+        diff = target_duration - actual_total
+        last_shot = scenes[-1]["shots"][-1]
         new_dur = last_shot["duration_seconds"] + diff
-        if new_dur < 2:
-            new_dur = 2
-        elif new_dur > 4:
-            new_dur = 4
+        new_dur = max(2, min(8, new_dur))
         last_shot["duration_seconds"] = new_dur
-        last_scene["duration"] = sum(s.get("duration_seconds", 3) for s in last_scene["shots"])
 
-    script["scenes"] = [sd["scene"] for sd in scene_durations]
     return script
 
 
-def _target_scene_count(duration_sec):
-    """返回目标场景数（每个场景约3-5秒）"""
-    if duration_sec <= 3:
-        return 1
-    elif duration_sec <= 6:
-        return 2
-    elif duration_sec <= 8:
-        return 2
-    elif duration_sec <= 10:
-        return 3
-    elif duration_sec <= 15:
-        return 3
-    else:
-        return max(2, duration_sec // 4)
 
 
 def _get_fallback_script(episode_num=1, genre="urban_romance", duration_sec=8, style="二次元"):
-    """预置兜底剧本（Gemini JSON 解析失败时使用），动态适配目标时长"""
-    target_scenes = _target_scene_count(duration_sec)
-    # 每个场景平均时长
-    avg_per_scene = duration_sec / target_scenes
+    """预置兜底剧本（Gemini JSON 解析失败时使用），每个镜头包含 audio_events"""
     scenes = []
-    # 预置对话模板（兜底用），按镜头时长×4 控制字数
-    _fallback_dialogues = [
-        "今天天气真好啊", "你怎么来了", "没关系，我来帮你",
-        "等一下，我想说", "我们走吧", "太不可思议了",
-        "你在看什么", "明天见", "我相信你",
-        "这不可能", "谢谢你", "别担心",
-        "快点过来", "今天加班吗", "晚餐吃什么",
-        "看那边", "快躲开", "他在哪",
-        "我找到了", "别放手", "快跑",
-        "终于到了", "别说了", "等等我",
-    ]
-    _diag_idx = 0
+    remaining = duration_sec
+    scene_idx = 1
+    locations = ["office", "cafe", "park", "apartment", "street"]
+    times = ["morning", "afternoon", "evening", "night", "morning"]
 
-    def _get_fallback_dur(duration_sec):
-        """生成兜底对话，字数 = duration_sec × 4"""
-        nonlocal _diag_idx
-        target_len = duration_sec * 4
-        # 拼接短语直到达到目标字数
-        text = ""
-        while len(text) < target_len:
-            text += _fallback_dialogues[_diag_idx % len(_fallback_dialogues)]
-            _diag_idx += 1
-        # 精确截断到目标字数
-        # 在最后一个标点处截断以保持通顺
-        if len(text) > target_len:
-            # 往回找最近的标点
-            cut = target_len
-            for offset in range(min(cut, 10)):
-                if text[cut - offset] in "，。！？；":
-                    cut = cut - offset
-                    break
-            text = text[:cut]
-        return text
-
-    for i in range(target_scenes):
-        if i == target_scenes - 1:
-            # 最后一个场景吸收误差
-            scene_dur = duration_sec - sum(s.get("_dur", 0) for s in scenes)
-        else:
-            scene_dur = round(avg_per_scene)
-        # 每个场景 1-2 个镜头
-        if scene_dur <= 3:
-            shots = [{"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                      "duration_seconds": scene_dur, "description": f"场景{i+1}镜头", "character": "xiaoming",
-                      "action": "动作", "dialogue": _get_fallback_dur(scene_dur),
-                      "narration": "", "emotion": "calm", "subtitle": ""}]
-        else:
-            d1 = scene_dur // 2
-            d2 = scene_dur - d1
-            shots = [
-                {"shot_id": "shot_1", "shot_type": "medium_shot", "camera_movement": "static",
-                 "duration_seconds": max(2, min(4, d1)), "description": f"场景{i+1}镜头1", "character": "xiaoming",
-                 "action": "动作", "dialogue": _get_fallback_dur(max(2, min(4, d1))),
-                 "narration": "", "emotion": "calm", "subtitle": ""},
-                {"shot_id": "shot_2", "shot_type": "close_up", "camera_movement": "static",
-                 "duration_seconds": max(2, min(4, d2)), "description": f"场景{i+1}镜头2", "character": "xiaoli",
-                 "action": "动作", "dialogue": _get_fallback_dur(max(2, min(4, d2))),
-                 "narration": "", "emotion": "calm", "subtitle": ""}
-            ]
+    while remaining > 0 and scene_idx <= 6:
+        dur = min(remaining, 6)
+        audio_events = {
+            "dialogue": [{"role": "xiaoming", "lines": "怎么了？", "timecode": f"0.3-{min(dur-0.5, 2.5):.1f}", "emotion": "calm", "speed": 0}],
+            "VO": [],
+            "SFX": [],
+            "Atmos": []
+        }
+        shot = {
+            "shot_id": f"shot_1", "shot_type": "medium_shot", "camera_movement": "static",
+            "duration_seconds": dur, "description": f"场景{scene_idx}镜头", "character": "xiaoming",
+            "action": "动作", "emotion": "calm",
+            "audio_events": audio_events, "subtitle": ""
+        }
         scenes.append({
-            "scene_id": f"scene_{i+1}",
-            "location": ["office", "cafe", "park", "apartment", "street"][i % 5],
-            "time_of_day": ["morning", "afternoon", "evening", "night", "morning"][i % 5],
+            "scene_id": f"scene_{scene_idx}",
+            "location": locations[(scene_idx - 1) % 5],
+            "time_of_day": times[(scene_idx - 1) % 5],
             "lighting": "自然光", "mood": "平静",
-            "shots": shots,
-            "_dur": sum(s["duration_seconds"] for s in shots)
+            "shots": [shot]
         })
-    # 清理内部字段
-    for s in scenes:
-        del s["_dur"]
+        remaining -= dur
+        scene_idx += 1
+
     return {
         "episode": episode_num,
         "title": f"第{episode_num}集：短剧",
