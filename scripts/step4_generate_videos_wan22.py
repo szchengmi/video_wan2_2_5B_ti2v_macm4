@@ -256,8 +256,8 @@ def _find_wan22_models(model_name=None):
 
     # 根据 model_name 决定 UNET/VAE 关键词
     if model_name:
-        ml = model_name.lower().replace("-", "_").replace(".", "_")
-        # 提取模型系列: wan2.2-5b → wan2.2_5b; wan2.1-1.3b → wan2.1_1.3b
+        ml = model_name.lower()
+        # 用原始名称判断（不做 replace，避免 wan2.1 → wan2_1 导致匹配失败）
         if "wan2.2" in ml:
             unet_keywords = ["wan2.2_ti2v_5b", "wan2.2_5b"]
             vae_keywords = ["wan2.2_vae"]
@@ -265,7 +265,7 @@ def _find_wan22_models(model_name=None):
             unet_keywords = ["wan2.1_t2v_1.3b", "wan2.1_1.3b", "wan2.1_t2v_14b", "wan2.1_14b"]
             vae_keywords = ["wan_2.1_vae", "wan2.1_vae"]
         else:
-            unet_keywords = [ml]
+            unet_keywords = [ml.replace("-", "_")]
             vae_keywords = []
         is_gguf = "gguf" in ml
     else:
