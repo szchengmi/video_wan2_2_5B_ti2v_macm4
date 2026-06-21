@@ -454,15 +454,14 @@ def main(storyboard=None):
     cfg = float(os.environ.get("WAN22_CFG", "5.0"))
     shift = float(os.environ.get("WAN22_SHIFT", "8.0"))
 
-    # 启动时健康检查：等待 ComfyUI API 就绪（加载大模型可能需要时间）
+    # 启动时健康检查：用 ComfyUI prompt API 验证（确保模型加载完毕）
     import urllib.request as _urllib_req
-    _health_url = f"{COMFYUI_URL}/system_stats"
+    _opener = _urllib_req.build_opener(_urllib_req.ProxyHandler({}))
     _wait = 0
-    while _wait < 120:  # 最多等 120 秒
+    while _wait < 180:  # 最多等 180 秒（加载 10GB 模型需要时间）
         try:
-            req = _urllib_req.Request(_health_url)
-            _opener = _LocalOpener()
-            resp = _opener.open(req, timeout=5)
+            # 用 GET /object_info 检查 ComfyUI 是否能处理请求（比 system_stats 更可靠）
+            resp = _opener.open(f"{COMFYUI_URL}/object_info", timeout=5)
             if resp.status == 200:
                 log(f"  ✅ ComfyUI API 就绪 (等待了 {_wait}s)")
                 break
@@ -470,8 +469,11 @@ def main(storyboard=None):
             import time as _time
             _time.sleep(5)
             _wait += 5
+        if _wait in (15, 30, 60, 120):
+            log(f"  ⏳ 等待 ComfyUI 启动中... ({_wait}s)")
     else:
-        log("  ⚠️ ComfyUI API 未在 120s 内就绪，继续尝试...")
+        log("  ❌ ComfyUI API 未在 180s 内就绪，退出")
+        return
 
     # 尺寸映射
     SIZE_MAP = {1: (384, 384), 2: (834, 480), 3: (480, 834), 4: (576, 320), 5: (384, 640)}
