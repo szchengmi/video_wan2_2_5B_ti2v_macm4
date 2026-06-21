@@ -522,6 +522,9 @@ def main(storyboard=None):
     dirs = get_dirs(EPISODE_NUM)
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
 
+    # 参数 — 从环境变量读取模型配置（必须先于模型查找）
+    model_name = os.environ.get("WAN22_MODEL", "wan2.2-5b-f16")
+
     # 模型
     models = _find_wan22_models(model_name)
     for name, path in [("UNET", models["unet"]), ("CLIP", models["clip"]), ("VAE", models["vae"])]:
@@ -530,8 +533,7 @@ def main(storyboard=None):
             return
         log(f"  ✅ {name}: {os.path.basename(path)} ({os.path.getsize(path)/1e6:.0f}MB)")
 
-    # 参数 — 从环境变量读取模型配置（由 kaggle_pipeline 传入）
-    model_name = os.environ.get("WAN22_MODEL", "wan2.2-5b-f16")
+    # 其余参数 — 从环境变量读取（model_name 已在前面读取）
     _fps = int(os.environ.get("WAN22_FPS", "8"))
     steps = int(os.environ.get("WAN22_STEPS", "20"))
     cfg = float(os.environ.get("WAN22_CFG", "5.0"))
