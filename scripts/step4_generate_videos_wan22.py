@@ -537,9 +537,9 @@ def main(storyboard=None):
             else:
                 video_prompt = f"{prompt_base}, smooth motion, cinematic"
             neg_prompt = shot.get("negative_prompt", "blurry, distorted, static, motionless, low quality")
-            seed = shot.get("seed", 42)
+            seed = shot.get("seed", -1)
             if isinstance(seed, str) or seed < 0:
-                seed = 42
+                seed = 42 + count  # 每个镜头不同 seed，避免生成相同视频
 
             # 动态帧数：根据镜头 duration_seconds 计算
             duration_seconds = shot.get("duration_seconds", 6)
