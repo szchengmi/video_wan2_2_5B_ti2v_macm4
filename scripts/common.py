@@ -63,6 +63,65 @@ else:
 
 WAN22_MODELS_DIR = WAN22_DATASET  # Mac 上模型文件直接在目录下
 
+# ============================================================
+# 模型路径映射（明确指定，不搜索）
+# key: model_arg (如 'wan2.2-5b-f16')
+# value: {unet, clip, vae} 相对于 WAN22_MODELS_DIR 的路径
+# ============================================================
+MODEL_PATH_MAP = {
+    # ── Wan2.2 5B ──
+    "wan2.2-5b-f16": {
+        "unet": "unet/wan2.2_ti2v_5B_fp16.safetensors",
+        "vae": "vae/wan2.2_vae.safetensors",
+        # CLIP/VAE 各模型共用
+        "clip": None,  # 占位，见 CLIP 全局设置
+    },
+    "wan2.2-5b-gguf": {
+        "unet": "unet/wan2.2-ti2v-5b-fp32-q4_0.gguf",
+        "vae": "vae/wan2.2_vae.safetensors",
+        "clip": None,
+    },
+    # ── Wan2.1 ──
+    "wan2.1-1.3b-f16": {
+        "unet": "unet/wan2.1_t2v_1.3B_fp16.safetensors",
+        "vae": "vae/wan_2.1_vae.safetensors",
+        "clip": None,
+    },
+    "wan2.1-14b-gguf": {
+        "unet": None,  # TODO: 待下载
+        "vae": "vae/wan_2.1_vae.safetensors",
+        "clip": None,
+    },
+}
+
+# 全局 CLIP（所有模型共用，优先 umt5_xxl，排除损坏的 t5xxl_um）
+def _find_clip():
+    """找到完整的 CLIP 模型（排除损坏的 t5xxl_um 副本）"""
+    candidates = [
+        "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "text_encoders/umt5-xxl-enc-fp8_e4m3fn.safetensors",
+    ]
+    for rel in candidates:
+        fp = os.path.join(WAN22_MODELS_DIR, rel)
+        if os.path.isfile(fp) and os.path.getsize(fp) > 1e9:  # >1GB 才有效
+            return fp
+    return None
+
+CLIP_PATH = _find_clip()
+
+def get_model_paths(model_arg):
+    """根据 model_arg 返回 {unet, clip, vae} 绝对路径"""
+    cfg = MODEL_PATH_MAP.get(model_arg)
+    if not cfg:
+        raise ValueError(f"未知模型: {model_arg}，可用: {list(MODEL_PATH_MAP.keys())}")
+    base = WAN22_MODELS_DIR
+    result = {
+        "unet": os.path.join(base, cfg["unet"]) if cfg.get("unet") else None,
+        "clip": CLIP_PATH,
+        "vae": os.path.join(base, cfg["vae"]) if cfg.get("vae") else None,
+    }
+    return result
+
 EPISODE_NUM = int(os.environ.get("EPISODE_NUM", "1"))
 
 # ComfyUI 启动参数

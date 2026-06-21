@@ -219,102 +219,7 @@ def _start_comfyui():
     return False
 
 
-# ============================================================
-# 模型查找
-# ============================================================
 
-def _find_wan22_models(model_name=None):
-    """查找模型文件，兼容 Mac 本地和 Kaggle 路径
-    model_name: 如 'wan2.2-5b-f16', 'wan2.1-1.3b-f16' 等，决定搜索哪个 UNET/VAE
-    """
-    search_paths = [WAN22_MODELS_DIR]
-
-    # Mac 本地: 模型在 models/unet/, models/vae/, models/clip/, models/text_encoders/
-    if _IS_MAC:
-        for sub in ["unet", "vae", "clip", "text_encoders"]:
-            p = os.path.join(WAN22_MODELS_DIR, sub)
-            if os.path.isdir(p):
-                search_paths.append(p)
-        # 也搜索 models/ 下直接放文件的情况
-        if os.path.isdir(WAN22_MODELS_DIR):
-            search_paths.append(WAN22_MODELS_DIR)
-        # 搜索 /Users/heipi/asset/ (用户本地模型目录)
-        _USER_ASSET = "/Users/heipi/asset"
-        if os.path.isdir(_USER_ASSET):
-            search_paths.append(_USER_ASSET)
-            for sub in ["unet", "vae", "clip", "text_encoders"]:
-                p = os.path.join(_USER_ASSET, sub)
-                if os.path.isdir(p):
-                    search_paths.append(p)
-
-    # Kaggle: 也搜索 Dataset 的 models/ 子目录
-    if _IS_KAGGLE:
-        for d in ["/kaggle/input/saysnkaggle/wan2-2-5b-f16",
-                  "/kaggle/input/saysnkaggle/wan2-2-5b-f16/models"]:
-            if os.path.isdir(d):
-                search_paths.append(d)
-
-    # 根据 model_name 决定 UNET/VAE 关键词
-    if model_name:
-        ml = model_name.lower()
-        # 用原始名称判断（不做 replace，避免 wan2.1 → wan2_1 导致匹配失败）
-        if "wan2.2" in ml:
-            unet_keywords = ["wan2.2_ti2v_5b", "wan2.2_5b"]
-            vae_keywords = ["wan2.2_vae"]
-        elif "wan2.1" in ml:
-            unet_keywords = ["wan2.1_t2v_1.3b", "wan2.1_1.3b", "wan2.1_t2v_14b", "wan2.1_14b"]
-            vae_keywords = ["wan_2.1_vae", "wan2.1_vae"]
-        else:
-            unet_keywords = [ml.replace("-", "_")]
-            vae_keywords = []
-        is_gguf = "gguf" in ml
-    else:
-        # 默认: 优先 wan2.2
-        unet_keywords = ["wan2.2_ti2v_5b", "wan2.2_5b"]
-        vae_keywords = ["wan2.2_vae"]
-        is_gguf = False
-
-    result = {"unet": None, "clip": None, "vae": None}
-    for base in search_paths:
-        if not os.path.isdir(base):
-            continue
-        for f in os.listdir(base):
-            fl = f.lower()
-            fp = os.path.join(base, f)
-            if not os.path.isfile(fp):
-                continue
-
-            # UNET: 根据 model_name 匹配
-            if result["unet"] is None:
-                for kw in unet_keywords:
-                    if kw in fl:
-                        # fp16 匹配 fp16，gguf 匹配 gguf
-                        if is_gguf and "gguf" in fl:
-                            result["unet"] = fp
-                            break
-                        elif not is_gguf and "fp16" in fl:
-                            result["unet"] = fp
-                            break
-                # 也匹配 decoder.safetensors 作为 fallback（Wan2.2）
-                if result["unet"] is None and "decoder.safetensors" in fl and "wan2.2" in ml:
-                    result["unet"] = fp
-
-            # CLIP: 优先 umt5_xxl，排除 t5xxl_um（损坏的副本）
-            if result["clip"] is None and ("umt5_xxl" in fl):
-                result["clip"] = fp
-            elif result["clip"] is None and ("t5xxl" in fl) and "umt5_xxl" not in fl and "t5xxl_um" not in fl:
-                result["clip"] = fp
-
-            # VAE: 根据 model_name 匹配
-            if result["vae"] is None:
-                for kw in vae_keywords:
-                    if kw in fl:
-                        result["vae"] = fp
-                        break
-                # fallback: dvae
-                if result["vae"] is None and "dvae.safetensors" in fl and "wan2.2" in ml:
-                    result["vae"] = fp
-    return result
 
 
 # ============================================================
@@ -520,18 +425,26 @@ def main(storyboard=None):
     log("=" * 50)
     log("Step 4: 视频生成 (Wan2.2 TI2V 5B fp16)")
     log("=" * 50)
-
-    dirs = get_dirs(EPISODE_NUM)
-    total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
-
-    # 参数 — 从环境变量读取模型配置（必须先于模型查找）
+    # 参数 — 从环境变量读取
     model_name = os.environ.get("WAN22_MODEL", "wan2.2-5b-f16")
+    _fps = int(os.environ.get("WAN22_FPS", "8"))
+    steps = int(os.environ.get("WAN22_STEPS", "20"))
+    cfg = float(os.environ.get("WAN22_CFG", "5.0"))
+    shift = float(os.environ.get("WAN22_SHIFT", "8.0"))
 
-    # 模型
-    models = _find_wan22_models(model_name)
+    # 模型路径 — 直接查表，不搜索
+    from common import get_model_paths
+    try:
+        models = get_model_paths(model_name)
+    except ValueError as e:
+        log(f"  ❌ {e}")
+        return
     for name, path in [("UNET", models["unet"]), ("CLIP", models["clip"]), ("VAE", models["vae"])]:
         if not path:
             log(f"  ❌ {name} 未找到")
+            return
+        if not os.path.isfile(path):
+            log(f"  ❌ {name} 文件不存在: {path}")
             return
         log(f"  ✅ {name}: {os.path.basename(path)} ({os.path.getsize(path)/1e6:.0f}MB)")
 
